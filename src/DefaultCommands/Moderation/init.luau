@@ -2496,4 +2496,62 @@ return {
 			})
 		end,
 	},
+	{
+		name = "whois",
+		aliases = { "userinfo" },
+		description = "Displays detailed information about a player.",
+		args = {
+			{
+				type = "player",
+				name = "Player",
+				description = "The player to get information about.",
+			},
+		},
+		run = function(context, player)
+			local userId = player.UserId
+			local displayName = player.DisplayName or player.Name
+			local name = player.Name
+			local team = player.Team and player.Team.Name or "None"
+			local accountAge = player.AccountAge or "?"
+			local rank, role = context._K.Auth.getRank(player.UserId)
+			local isMuted = context._K.Data.muted and context._K.Data.muted[userId] and "Yes" or "No"
+			local teamColor = player.Team and "#" .. player.Team.TeamColor.Color:ToHex() or "#16a085"
+			local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			local playerLocale = context._K.Service.LocalizationService:GetCountryRegionForPlayerAsync(player)
+
+			--? this should probably be moved to a file in Utility
+			local function getFlag(locale)
+				local first = string.byte(string.upper(string.sub(locale, 1, 1))) - 0x41 + 0x1F1E6
+				local second = string.byte(string.upper(string.sub(locale, 2, 2))) - 0x41 + 0x1F1E6
+				return utf8.char(first) .. utf8.char(second)
+			end
+
+			local info = {
+				`<b>Name:</b> {name}`,
+				`<b>DisplayName:</b> {displayName}`,
+				`<b>UserId:</b> {userId}`,
+				`<b>Team:</b> <font color="{teamColor}">{team}</font>`,
+				(player.Team and `<b>Display Color:</b> <font color="#{teamColor}">{teamColor}</font>` or nil),
+				`<b>Account Age:</b> {accountAge} day(s)`,
+				`<b>Rank:</b> {rank}`,
+				`<b>Role:</b> <font color="{role.color or "#2ecc71"}">{role.name}</font>`,
+				`<b>Locale:</b> {getFlag(playerLocale)} {playerLocale}`,
+				`<b>Health:</b> {humanoid and (humanoid.Health .. " / " .. humanoid.MaxHealth) or "N/A"}`,
+				`<b>Muted:</b> {isMuted}`,
+			}
+
+			local filteredInfo = {}
+			for _, line in info do
+				if line then
+					table.insert(filteredInfo, context._K.Util.String.filterForBroadcast(line, context.from))
+				end
+			end
+
+			context._K.Remote.Notify:FireClient(context.fromPlayer, {
+				Title = "Whois: " .. name,
+				Text = table.concat(filteredInfo, "\n"),
+				From = "_K",
+			})
+		end,
+	},
 }
