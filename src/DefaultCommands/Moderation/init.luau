@@ -2496,4 +2496,143 @@ return {
 			})
 		end,
 	},
+	{
+		name = "chattag",
+		description = "Adds a chat tag to a player. Usage: ;chattag tagName tagColor",
+		args = {
+			{
+				type = "player",
+				name = "Player",
+				description = "The player to give the chat tag.",
+			},
+			{
+				type = "string",
+				name = "Tag Name",
+				description = "The tag text to display.",
+			},
+			{
+				type = "color",
+				name = "Tag Color",
+				description = "The color of the tag.",
+				optional = true,
+			},
+		},
+		env = function(_K)
+			_K.Data.Cache = _K.Data.Cache or {}
+			_K.Data.Cache.chatTags = _K.Data.Cache.chatTags or {}
+			return {
+				remote = _K.Remote.ChatTag or _K.Remote:Create("ChatTag"),
+				tags = _K.Data.Cache.chatTags,
+			}
+		end,
+		envClient = function(_K)
+			local TextChatService = _K.Service.TextChatService
+			local Players = _K.Service.Players
+			local tags = {}
+
+			_K.Remote.ChatTag.OnClientEvent:Connect(function(userId, tagList)
+				tags[userId] = tagList
+			end)
+
+			TextChatService.OnIncomingMessage = function(message)
+				local props = Instance.new("TextChatMessageProperties")
+				local textSource = message.TextSource
+				if textSource then
+					local player = Players:GetPlayerByUserId(textSource.UserId)
+					local tagList = tags[player and player.UserId or 0]
+					if tagList and #tagList > 0 then
+						local prefix = ""
+						for i = 1, math.min(2, #tagList) do
+							local tag = tagList[i]
+							prefix ..= `<font color="#{tag.color}">[{tag.name}]</font> `
+						end
+						props.PrefixText = prefix .. (message.PrefixText or "")
+					end
+				end
+				return props
+			end
+		end,
+		run = function(context, player, tagName, tagColor)
+			local maxTags = context._K.Data.settings.maxChatTagCount or 2
+			local maxLength = context._K.Data.settings.maxChatTagLength or 10
+			local userId = player.UserId
+			local tags = context.env.tags
+
+			if not tagColor then
+				tagColor = BrickColor.random().Color
+			end
+
+			tags[userId] = tags[userId] or {}
+
+			if #tags[userId] >= maxTags then
+				context._K.Remote.Notify:FireClient(context.fromPlayer, {
+					From = "_K",
+					Title = "Chat Tag Limit Reached",
+					Text = `<b>You can only have {maxTags} chat tags at a time. Please remove one first.</b>`,
+				})
+			end
+
+			if #tagName > maxLength then
+				context._K.Remote.Notify:FireClient(context.fromPlayer, {
+					From = "_K",
+					Title = "Chat Tag Error",
+					Text = `<b>Chat tag name is too long! Maximum length is {maxLength} characters.</b>`,
+				})
+				return
+			end
+
+			local filteredTag = context._K.Util.String.filterForBroadcast(tagName, context.from)
+			table.insert(tags[userId], { name = filteredTag, color = tagColor:ToHex() })
+			context.env.remote:FireAllClients(userId, tags[userId])
+			context._K.Remote.Notify:FireClient(context.fromPlayer, {
+				From = "_K",
+				Title = "Chat Tag Added",
+				Text = `<b>Added chat tag:</b> <font color="#{tagColor:ToHex()}">[{filteredTag}]</font>`,
+			})
+		end,
+	},
+	{
+		name = "removechattag",
+		aliases = { "rmtag", "rmchattag" },
+		description = "Removes a chat tag from a player.",
+		args = {
+			{
+				type = "player",
+				name = "Player",
+				description = "The player to remove the chat tag from.",
+			},
+			{
+				type = "string",
+				name = "Tag Name",
+				description = "The tag text to remove.",
+			},
+		},
+		env = function(_K)
+			_K.Data.Cache = _K.Data.Cache or {}
+			_K.Data.Cache.chatTags = _K.Data.Cache.chatTags or {}
+			return {
+				remote = _K.Remote.ChatTag or _K.Remote:Create("ChatTag"),
+				tags = _K.Data.Cache.chatTags,
+			}
+		end,
+		run = function(context, player, tagName)
+			local userId = player.UserId
+			local tags = context.env.tags[userId]
+			if not tags then
+				return
+			end
+			for i, tag in ipairs(tags) do
+				if tag.name == tagName then
+					table.remove(tags, i)
+					break
+				end
+			end
+			context.env.remote:FireAllClients(userId, tags)
+			context._K.Remote.Notify:FireClient(context.fromPlayer, {
+				From = "_K",
+				Title = "Chat Tag Removed",
+				Text = `<b>Removed chat tag:</b> [{tagName}] from {player.Name}`,
+			})
+		end,
+	},
 }

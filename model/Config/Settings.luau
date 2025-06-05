@@ -85,6 +85,9 @@ return {
 	welcomeBadgeId = 0, --             Awards a badge to new players, set to 0 for no badge
 	getKohlsAdminPopup = true, --      Enables the "Enjoy Kohl's Admin?" feedback popup to users
 
+	maxChatTagLength = 10, -- Maximum length of chat tags (assigned via ;chattag)
+	maxChatTagCount = 2, -- Maximum number of chat tags a user can have
+
 	--[[
 	changeThemeAuthority:
 		"Client" - Clients can change their theme, which will save for future sessions.

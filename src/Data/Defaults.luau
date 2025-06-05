@@ -9,6 +9,7 @@ local Cache = {
 	bans = {},
 	members = {},
 	settings = {},
+	chatTags = {},
 	-- Logs
 	chatLogs = {},
 	logs = {},
@@ -44,6 +45,9 @@ local Data = {
 		wrongPrefixWarning = true,
 		welcomeBadgeId = 0,
 		getKohlsAdminPopup = true,
+
+		maxChatTagLength = 10,
+		maxChatTagCount = 2,
 
 		changeThemeAuthority = "Client",
 		defaultTheme = "Default",
