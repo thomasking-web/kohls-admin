@@ -425,9 +425,9 @@ return {
 				description = "The player(s) to add the particle effect to.",
 			},
 			{
-				type = "integer",
-				name = "ImageId",
-				description = "The image id of the particle.",
+				type = "image",
+				name = "AssetId",
+				description = "The image assetId of the particle.",
 				optional = true,
 			},
 			{
@@ -438,10 +438,10 @@ return {
 			},
 		},
 		env = function(_K)
-			local infiniteEffect = _K.Flux.new "ParticleEmitter" {
+			local particle = _K.Flux.new "ParticleEmitter" {
 				Enabled = false,
 				Name = "_KParticleEffect",
-				Texture = "rbxassetid://3021790960",
+				Texture = "rbxassetid://73860257495735",
 				Size = NumberSequence.new({
 					NumberSequenceKeypoint.new(0, 0),
 					NumberSequenceKeypoint.new(0.1, 0.25, 0.25),
@@ -469,29 +469,41 @@ return {
 				Rate = 11,
 				VelocitySpread = 180,
 			}
-			return { effect = infiniteEffect }
-		end,
 
-		run = function(context, players, image, color)
-			for _, player in players do
+			local function apply(fromPlayer, player, image, color)
 				local root = player.Character
 					and (player.Character:FindFirstChild("HumanoidRootPart") or player.Character.PrimaryPart)
 				if not root then
-					continue
+					return
 				end
 				local existing = root:FindFirstChild("_KParticleEffect")
 				if existing then
 					existing:Destroy()
 				end
-				local pe = context.env.effect:Clone()
+				local pe = particle:Clone()
+				if fromPlayer and (fromPlayer:GetAttribute("_KDonationLevel") < 3) then
+					color = color or Color3.new()
+				end
 				if color then
 					pe.Color = ColorSequence.new(color)
 				end
 				if image then
-					pe.Texture = context._K.Util.getTexture(image)
+					pe.Texture = _K.Util.getTexture(image)
 				end
 				pe.Enabled = true
 				pe.Parent = root
+			end
+
+			_K.Remote.DonorTrail.OnServerEvent:Connect(function(player)
+				apply(player, player, nil, nil)
+			end)
+
+			return { apply = apply }
+		end,
+
+		run = function(context, players, image, color)
+			for _, player in players do
+				context.env.apply(context.fromPlayer, player, image, color)
 			end
 		end,
 	},
@@ -507,7 +519,7 @@ return {
 			},
 		},
 
-		run = function(context, players, userId)
+		run = function(context, players)
 			for _, player in players do
 				local root = player.Character
 					and (player.Character:FindFirstChild("HumanoidRootPart") or player.Character.PrimaryPart)
@@ -515,6 +527,77 @@ return {
 					continue
 				end
 				local existing = root:FindFirstChild("_KParticleEffect")
+				if existing then
+					existing:Destroy()
+				end
+			end
+		end,
+	},
+	{
+		name = "trail",
+		aliases = { "☄️" },
+		description = "Adds a trail to one or more player(s).",
+		args = {
+			{
+				type = "players",
+				name = "Player(s)",
+				description = "The player(s) to add the trail to.",
+			},
+			{
+				type = "color",
+				name = "Color",
+				description = "The color of the trail.",
+				optional = true,
+			},
+		},
+
+		run = function(context, players: { Player }, color: Color3?)
+			for _, player in players do
+				local torso = player.Character
+					and (player.Character:FindFirstChild("Torso") or player.Character:FindFirstChild("UpperTorso"))
+				if not torso then
+					continue
+				end
+				local existing = torso:FindFirstChild("_KTrailEffect")
+				if existing then
+					existing:Destroy()
+				end
+				local trail = Instance.new("Trail")
+				trail.Name = "_KTrailEffect"
+				trail.Attachment0 = torso:FindFirstChild("WaistRigAttachment")
+					or torso:FindFirstChild("WaistCenterAttachment")
+				trail.Attachment1 = torso:FindFirstChild("NeckAttachment")
+				trail.FaceCamera = true
+				trail.Lifetime = 0.5
+				trail.LightEmission = 1
+				trail.LightInfluence = 0
+				trail.WidthScale = NumberSequence.new(1, 0)
+				trail.Transparency = NumberSequence.new(0, 1)
+				trail.Color = color or trail.Color
+				trail.Parent = torso
+			end
+		end,
+	},
+	{
+		name = "untrail",
+		aliases = { "un☄️" },
+		description = "Removers a trail from one or more player(s).",
+		args = {
+			{
+				type = "players",
+				name = "Player(s)",
+				description = "The player(s) to remove the trail from.",
+			},
+		},
+
+		run = function(context, players)
+			for _, player in players do
+				local torso = player.Character
+					and (player.Character:FindFirstChild("Torso") or player.Characer:FindFirstChild("UpperTorso"))
+				if not torso then
+					continue
+				end
+				local existing = torso:FindFirstChild("_KTrailEffect")
 				if existing then
 					existing:Destroy()
 				end
@@ -553,7 +636,7 @@ return {
 				},
 			}
 		end,
-		run = function(context, players, userId)
+		run = function(context, players)
 			for _, player in players do
 				local root = player.Character
 					and (player.Character:FindFirstChild("HumanoidRootPart") or player.Character.PrimaryPart)
@@ -819,6 +902,12 @@ return {
 				description = "The assetId of one or more hats.",
 			},
 			{
+				type = "image",
+				name = "Texture",
+				description = "The assetId of the hat texture.",
+				optional = true,
+			},
+			{
 				type = "color",
 				name = "Color",
 				description = "The color to apply to the hat.",
@@ -855,7 +944,7 @@ return {
 			}
 		end,
 
-		run = function(context, players, assetIds, color, reflectance, material)
+		run = function(context, players, assetIds, texture, color, reflectance, material)
 			for i, assetId in assetIds do
 				if i >= 16 then
 					break
@@ -907,6 +996,17 @@ return {
 
 				if not hat then
 					continue
+				end
+
+				if texture and hat:FindFirstChild("Handle") then
+					if hat.Handle:IsA("MeshPart") then
+						hat.Handle.TextureID = texture
+					else
+						local mesh = hat.Handle:FindFirstChildWhichIsA("FileMesh")
+						if mesh then
+							mesh.TextureId = texture
+						end
+					end
 				end
 
 				if color then
@@ -1277,15 +1377,12 @@ return {
 					if deny[material] then
 						return
 					end
-					local apply = color or reflectance or material
-					local checkParent = if apply then character else character.PrimaryPart
-					local setParent = if apply then character.PrimaryPart else character
 					local humanoid = character:FindFirstChildOfClass("Humanoid")
-
-					local bodyColors = checkParent:FindFirstChildOfClass("BodyColors")
-					if bodyColors then
-						bodyColors.Parent = setParent
+					if not humanoid then
+						return
 					end
+
+					local apply = color or reflectance or material
 
 					if material ~= Enum.Material.ForceField then
 						local shirt = character:FindFirstChildOfClass("Shirt")
@@ -1309,16 +1406,15 @@ return {
 						if descendant:IsA("BasePart") and descendant.Name ~= "HumanoidRootPart" then
 							updatePart(descendant, color, reflectance, material)
 						elseif descendant:IsA("SurfaceAppearance") then
-							if apply and not descendant:FindFirstChild("_KParent") and humanoid then
+							if apply and not descendant:FindFirstChild("_KParent") then
 								local _KParent = Instance.new("ObjectValue")
 								_KParent.Name = "_KParent"
 								_KParent.Value = descendant.Parent
 								_KParent.Parent = descendant
 								descendant.Parent = humanoid
 							elseif not apply and descendant:FindFirstChild("_KParent") then
-								-- yes this is cursed, but Luau error 1013 demands a semicolon.
-								descendant.Parent = (descendant :: SurfaceAppearance & { _KParent: ObjectValue })._KParent.Value;
-								(descendant :: SurfaceAppearance & { _KParent: ObjectValue })._KParent:Destroy()
+								descendant.Parent = descendant._KParent.Value
+								descendant._KParent:Destroy()
 							end
 						end
 					end

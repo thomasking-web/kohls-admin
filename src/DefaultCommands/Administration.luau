@@ -12,6 +12,23 @@ return {
 			},
 		},
 		env = function(_K)
+			local function announceDataInit()
+				local announcement = _K.Data.settings.announcement
+				if announcement then
+					local message, from = unpack(announcement)
+					_K.Remote.Announce:FireAllClients({
+						From = from,
+						Text = message,
+						Duration = 0,
+					})
+				end
+			end
+			if _K.Data.settings.announcement then
+				announceDataInit()
+			else
+				_K.Hook.initDataStore:Once(announceDataInit)
+			end
+
 			task.spawn(function()
 				_K.Service.Messaging:SubscribeAsync("KA_Announcement", function(message)
 					if type(message.Data) ~= "table" then
@@ -19,46 +36,20 @@ return {
 						return
 					end
 
-					local oldMsg, oldFrom
-					if _K.Data.settings.announcement then
-						oldMsg, oldFrom = unpack(_K.Data.settings.announcement)
-					end
-
 					local msg, from = unpack(message.Data)
-					if msg ~= oldMsg or from ~= oldFrom then
-						_K.Data.settings.announcement = message.Data
-						_K.Remote.Announce:FireAllClients({
-							From = from,
-							Text = msg,
-							Duration = 0,
-						})
-					end
+					_K.Data.settings.announcement = message.Data
+					_K.Remote.Announce:FireAllClients({
+						From = from,
+						Text = msg,
+						Duration = 0,
+					})
 				end)
-			end)
-		end,
-		envClient = function(_K)
-			task.spawn(function()
-				repeat
-					task.wait()
-				until _K.client and _K.client.ready
-
-				local announcement = _K.client.settings.announcement._value
-				if not announcement then
-					return
-				end
-
-				local message, from = unpack(announcement)
-				_K.Announce({
-					From = from,
-					Text = message,
-					Duration = 0,
-				})
 			end)
 		end,
 
 		run = function(context, message)
-			if context._K.Data.IS_PRIVATE_SERVER then
-				return `Announce are disabled in private servers.`
+			if context._K.Data.SEPARATE_DATASTORE then
+				return `Announcements are disabled in private servers.`
 			end
 
 			local announcement = { message, context.from }
@@ -74,17 +65,18 @@ return {
 		args = {},
 
 		run = function(context)
-			if context._K.Data.IS_PRIVATE_SERVER then
+			if context._K.Data.SEPARATE_DATASTORE then
 				return `Announcements are disabled in private servers.`
 			end
 
-			context._K.Data.Cache.settings.announcement = false
+			context._K.Data.Cache.settings.announcement = context._K.Data.REMOVE
 			context._K.Service.Messaging:PublishAsync("KA_Announcement", nil)
 			return
 		end,
 	},
 	{
 		name = "role",
+		aliases = { "rank" },
 		description = "Assigns a role(s) to one or more user(s).",
 		args = {
 			{
@@ -150,6 +142,7 @@ return {
 	},
 	{
 		name = "temprole",
+		aliases = { "temprank" },
 		description = "Assigns a temporary role(s) to one or more user(s).",
 		args = {
 			{
@@ -208,7 +201,7 @@ return {
 	},
 	{
 		name = "unrole",
-		aliases = { "removerole" },
+		aliases = { "removerole", "unrank", "removerank" },
 		description = "Removes one or more role(s) from one or more member(s).",
 		args = {
 			{
@@ -273,7 +266,7 @@ return {
 				local member = context._K.Data.members[key]
 				if member then
 					context._K.Data.members[key] = nil
-					context._K.Data.Cache.members[key] = false
+					context._K.Data.Cache.members[key] = context._K.Data.REMOVE
 					context._K.Remote.Member:FireAllClients(key)
 					table.insert(membersUnroled, member and member.name or key)
 				end
@@ -380,7 +373,15 @@ return {
 			},
 		},
 
+		env = function(_K)
+			return {
+				blocked = { 59524079, 59524162, 59524102, 59524044, 59524124, 59524006 },
+			}
+		end,
 		run = function(context, assetId)
+			if table.find(context.env.blocked, assetId) then
+				return "Model has been blocked."
+			end
 			local ok, result = pcall(function()
 				return context._K.Service.Insert:LoadAsset(assetId)
 			end)
@@ -390,6 +391,11 @@ return {
 				else
 					return result
 				end
+			end
+			local packageRef = result:FindFirstChild("packageRef", true)
+			if packageRef and packageRef:FindFirstChildOfClass("ObjectValue") then
+				result:Destroy()
+				return "Model has been blocked."
 			end
 			result.Parent = workspace
 			result:MoveTo(context.fromPlayer.Character:GetPivot().Position)

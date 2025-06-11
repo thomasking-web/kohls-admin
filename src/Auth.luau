@@ -90,7 +90,7 @@ function Auth.banUsers(
 		end
 	end
 
-	if banAsync and timestamp and not Data.IS_PRIVATE_SERVER then
+	if banAsync and timestamp and not Data.SEPARATE_DATASTORE then
 		Util.Service.Players:BanAsync({
 			UserIds = userIds,
 			PrivateReason = reason or "No reason.",
@@ -102,8 +102,6 @@ function Auth.banUsers(
 end
 
 function Auth.unbanUsers(userIds: { number }, fromUserId: number?, forceBanAsync: boolean?)
-	local banAsync = forceBanAsync or not fromUserId or Auth.hasPermission(fromUserId, "banasync")
-
 	for index, userId in userIds do
 		local number = tonumber(userId)
 		if number then
@@ -111,9 +109,7 @@ function Auth.unbanUsers(userIds: { number }, fromUserId: number?, forceBanAsync
 		end
 		local key = tostring(userId)
 		Data.bans[key] = nil
-		if banAsync then
-			Data.Cache.bans[key] = false
-		end
+		Data.Cache.bans[key] = Data.REMOVE
 		for _, player in Util.Service.Players:GetPlayers() do
 			if Auth.hasCommand(player.UserId, "ban") then
 				Remote.Ban:FireClient(player, key)
@@ -121,7 +117,7 @@ function Auth.unbanUsers(userIds: { number }, fromUserId: number?, forceBanAsync
 		end
 	end
 
-	if banAsync and not Data.IS_PRIVATE_SERVER then
+	if not Data.SEPARATE_DATASTORE then
 		Util.Service.Players:UnbanAsync({ UserIds = userIds, ApplyToUniverse = true })
 	end
 end
@@ -227,7 +223,7 @@ function Auth.userRoleRemove(userId: number, roleId: Role): boolean
 		end
 		if persistent then
 			if #member.persist == 0 then
-				Data.Cache.members[key] = false
+				Data.Cache.members[key] = Data.REMOVE
 			else
 				task.spawn(saveMember, key, userId)
 			end
@@ -468,8 +464,29 @@ function Auth.getRank(userId: number): (number, Role)
 	return 0, Data.roles.everyone
 end
 
+--- Gets the closest role equal to or above a given rank
+function Auth.getRoleFromRank(rank: number): Role
+	local roleResult = Data.roles.creator
+	for roleId, role in Data.roles do
+		if role._rank == rank then
+			return role
+		end
+		if role._rank >= rank and role._rank < roleResult._rank then
+			roleResult = role
+		end
+	end
+	return roleResult
+end
+
 function Auth.targetUserArgument(arg, userId: number, value: Player | number | string)
 	local from = arg.command.from
+	local limits = arg.command.fromRole.limits
+	local targetLimits = arg._K.Data.targetLimits
+	targetLimits[from] = targetLimits[from] or 0
+	if limits and targetLimits[from] > (limits.targets or math.huge) then
+		return nil, `Can only target {limits.targets} user{if limits.targets == 1 then "" else "s"}`
+	end
+	targetLimits[from] += 1
 	if userId == from then
 		if arg.definition.ignoreSelf then
 			return nil, "Can't target yourself"
@@ -490,7 +507,7 @@ function Auth.targetUserArgument(arg, userId: number, value: Player | number | s
 		if player and player:GetAttribute("_KRolesLoaded") ~= true then
 			return nil, "Can't target loading user"
 		end
-		if Auth.getRank(userId) < Auth.getRank(from) then
+		if Auth.getRank(userId) < (if arg.command.rank == 0 then arg.command.fromRank else arg.command.rank) then
 			return value
 		end
 		return nil, "Can only target lower ranks"

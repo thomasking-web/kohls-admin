@@ -1,3 +1,6 @@
+--!optimize 2
+--!native
+
 local Auth = require(script.Parent.Auth)
 local Data = require(script.Parent.Data.Defaults)
 local Hook = require(script.Parent.Hook)
@@ -52,7 +55,7 @@ function Process.rawParse(message: string, prefixes: { string }, delimiter: stri
 			argument = { first - 1, prefix, char }
 			table.insert(command, argument)
 		elseif char == prefix and string.find(lastChar, delimiter) then
-			if #argument == 1 then
+			if #argument == 1 or string.find(argument[2], `^{delimiter}*$`) then
 				table.remove(command)
 			end
 			argument = { first + 1 }
@@ -116,7 +119,7 @@ function Process.prepareCommands(_K: any, from: number, rawText: string)
 		local commandDefinition = Registry.commands[commandAlias]
 
 		if not commandDefinition then
-			return false, "Invalid command: " .. commandText
+			return false, `Invalid command: {commandText}, did you mean "{Registry.suggestCommandAlias(commandAlias)}"?`
 		end
 
 		if not Auth.hasCommand(from, commandDefinition) then
@@ -149,21 +152,55 @@ function Process.prepareCommands(_K: any, from: number, rawText: string)
 	return true, commands
 end
 
+local commandLimits = {}
+local function resetLimit(from: number)
+	commandLimits[from] = nil
+end
+
 function Process.runCommands(_K: any, from: number, rawText: string, noLog: boolean?): boolean
 	from = from or _K.creatorId
+
+	local cooldown, limit
+	if _K.IsServer then
+		local _rank, role = _K.Auth.getRank(from)
+		if role.limits then
+			cooldown, limit = role.limits.cooldown, role.limits.commands
+		end
+		if (commandLimits[from] or 0) > (limit or math.huge) then
+			_K.systemNotify(from, `<b>Command usage on cooldown!</b>`, true)
+			return false
+		end
+	end
+
 	local ok, result = Process.prepareCommands(_K, from, rawText)
 
 	local commandsRan = {}
 	local commandErrors = {}
 
 	if ok then
-		for _, command in result do
+		for index, command in result do
 			local _ok, err = command:run()
 			if err then
 				local escapedError = _K.Util.String.escapeRichText(err)
 				table.insert(commandErrors, `<b>"{command.alias}" command failed:</b> {escapedError}`)
 			else
 				table.insert(commandsRan, command)
+			end
+			if _K.IsServer and limit then
+				if not commandLimits[from] then
+					commandLimits[from] = 0
+					task.delay(cooldown, resetLimit, from)
+				end
+				commandLimits[from] += 1
+				if commandLimits[from] > limit then
+					local notRan = {}
+					for _ = index, #result do
+						table.insert(notRan, command.alias)
+					end
+					local appendText = if #notRan == 0 then "" else `\nCommands not ran: {table.concat(notRan, ", ")}`
+					_K.systemNotify(from, `<b>Command limit reached!</b>{appendText}`, true)
+					break
+				end
 			end
 		end
 
@@ -178,7 +215,7 @@ function Process.runCommands(_K: any, from: number, rawText: string, noLog: bool
 			local player = _K.Service.Players:GetPlayerByUserId(from)
 			if player then
 				_K.Remote.Notify:FireClient(
-					_K.Service.Players:GetPlayerByUserId(from),
+					player,
 					{ Text = commandError, From = "_K", TextColor3 = Color3.new(1, 0, 0), Sound = "Call_Leave" }
 				)
 				for _, err in commandErrors do
@@ -213,7 +250,7 @@ function Process.runCommands(_K: any, from: number, rawText: string, noLog: bool
 			end
 			runOnServer = true
 			local last = command.array[#command.array]
-			table.insert(commandStrings, string.sub(rawText, command.array[1][1], last[1] + #last[2] - 1))
+			table.insert(commandStrings, string.sub(rawText, command.array[1][1], last[1] + #last[2]))
 		end
 		if runOnServer then
 			_K.Remote.Command:FireServer(`{prefix}{table.concat(commandStrings, " " .. prefix)}`)

@@ -1,19 +1,19 @@
+name: release-please
 on:
   push:
     branches:
       - master
     paths:
-      - "model/**"
-      - "src/**"
+      - model/**
+      - src/**
+      - test/**
 
 permissions:
   contents: write
   pull-requests: write
 
-name: release-please
-
 jobs:
-  release-please:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4

@@ -11,6 +11,8 @@ local Command = {
 Command.__index = Command
 
 function Command.new(_K, alias, definition: Type.CommandDefinition, array, from, text)
+	local rank, role = Auth.getRank(from)
+	_K.Data.targetLimits[from] = nil
 	return setmetatable({
 		_K = _K,
 		alias = alias,
@@ -19,7 +21,9 @@ function Command.new(_K, alias, definition: Type.CommandDefinition, array, from,
 		env = definition.env,
 		from = from,
 		fromPlayer = Players:GetPlayerByUserId(from),
-		fromRank = Auth.getRank(from),
+		fromRank = rank,
+		fromRole = role,
+		rank = Auth.hasCommand(from, definition) or 0,
 		text = text,
 		undo = string.find(alias, "un", 1, true) == 1,
 
@@ -36,7 +40,7 @@ function Command:shouldRequest(player: Player)
 	if self._K._shouldRequestOverride then
 		return self._K._shouldRequestOverride(self, player)
 	end
-	return self.from ~= self._K.creatorId and self.fromRank <= Auth.getRank(player.UserId)
+	return self.from ~= self._K.creatorId and self.rank <= Auth.getRank(player.UserId)
 end
 
 function Command:requestCommand(targetPlayer: Player, args, run)
@@ -56,7 +60,11 @@ function Command:requestCommand(targetPlayer: Player, args, run)
 		`{self._K.getCommandPrefix()}{self.alias} {targetPlayer.Name}`
 	)
 
-	local status = if accepted then "<font color='#0f0'>accepted</font>" else "<font color='#f00'>denied</font>"
+	local validColor = self._K.Data.settings.themeValid:ToHex()
+	local invalidColor = self._K.Data.settings.themeInvalid:ToHex()
+	local status = if accepted
+		then `<font color='#{validColor}'>accepted</font>`
+		else `<font color='#{invalidColor}'>denied</font>`
 	self._K.Remote.Notify:FireClient(
 		self.fromPlayer,
 		{ Text = `Command request for <b>{self.alias}</b> was <b>{status}</b>.`, From = targetPlayer.UserId }
@@ -139,10 +147,10 @@ function Command:validate()
 		return true
 	end
 
-	-- always try first argument
-	if #self.definition.args > 0 and #self.array < 2 then
-		self.text ..= " "
-		self.array[2] = { #self.text, "" }
+	-- always try first argument for player types
+	if self.definition.args[1] and string.find(self.definition.args[1].type, "player", 1, true) and #self.array < 2 then
+		local start, text = unpack(self.array[1])
+		self.array[2] = { start + #text, "" }
 	end
 
 	local filledSelf

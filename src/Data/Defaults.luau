@@ -18,6 +18,8 @@ local Cache = {
 
 local Data = {
 	IS_PRIVATE_SERVER = RunService:IsServer() and game.PrivateServerId ~= "" and game.PrivateServerOwnerId ~= 0,
+	SEPARATE_DATASTORE = false,
+	REMOVE = table.freeze({}),
 
 	Cache = Cache,
 	creatorId = game.CreatorId,
@@ -27,6 +29,7 @@ local Data = {
 	members = {},
 	players = {},
 	reservedServers = {},
+	targetLimits = {},
 	roles = nil,
 
 	settingsModuleData = nil,
@@ -85,7 +88,7 @@ local Data = {
 
 function Data.filterRemove(source: Dict): Dict
 	for key, value in source do
-		if value == false then
+		if value == Data.REMOVE then
 			source[key] = nil
 		elseif type(value) == "table" then
 			Data.filterRemove(value)
@@ -96,7 +99,7 @@ end
 
 function Data.mergeRemove(to: Dict, from: Dict): Dict
 	for key, value in from do
-		to[key] = if value == false then nil else value
+		to[key] = if value == Data.REMOVE then nil else value
 	end
 	return to
 end

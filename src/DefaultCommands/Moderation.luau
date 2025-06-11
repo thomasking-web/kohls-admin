@@ -1,8 +1,5 @@
 -- dangerous moderation commands, but not the most dangerous of commands
 
-local Jail = require(script.Jail)
-local teleportCharacter = require(script.teleportCharacter)
-
 return {
 	{
 		name = "bans",
@@ -203,7 +200,7 @@ return {
 			context._K.Auth.unbanUsers(bans, context.from)
 			context._K.Remote.Notify:FireClient(
 				context.fromPlayer,
-				{ Text = `<b>Unbanned:</b> <i>{table.concat(bans, ", ")}</i>` }
+				{ Text = `<b>Unbanned:</b> <i>{table.concat(unbannedNames, ", ")}</i>` }
 			)
 		end,
 	},
@@ -269,7 +266,7 @@ return {
 					end
 					local system = channels:FindFirstChild("RBXSystem")
 					system:DisplaySystemMessage(
-						`<font color="#{if muted then "f00" else "0f0"}"><b>You have been {muteText}!</b></font>`
+						`<font color="#{_K.UI.Theme[if muted then "Invalid" else "Valid"]._value:ToHex()}"><b>You have been {muteText}!</b></font>`
 					)
 				end
 			end)
@@ -1086,11 +1083,11 @@ return {
 			},
 		},
 
-		run = function(context, players, health)
+		run = function(context, players, damage)
 			for _, player in players do
 				local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 				if humanoid then
-					humanoid:TakeDamage(health)
+					humanoid:TakeDamage(damage)
 				end
 			end
 		end,
@@ -1454,17 +1451,173 @@ return {
 				shouldRequest = true,
 			},
 		},
+		envClient = function(_K)
+			_K.Remote.JailCollide.OnClientEvent:Connect(function(jail: Part)
+				for _, child in jail:GetChildren() do
+					if child:IsA("BasePart") then
+						child.CanCollide = true
+					end
+				end
+			end)
+		end,
 		env = function(_K)
+			local JailCollide = _K.Remote.JailCollide
+			local Jail = {
+				parts = {},
+				users = {},
+			}
+
+			local function pointInBounds(point, lower, upper)
+				return not (
+					point.X < lower.X
+					or point.Y < lower.Y
+					or point.Z < lower.Z
+					or point.X > upper.X
+					or point.Y > upper.Y
+					or point.Z > upper.Z
+				)
+			end
+
+			function Jail.recapture(player)
+				if not (player and player.Character and player.Character.PrimaryPart) then
+					return true
+				end
+				local existing = Jail.parts[player.UserId]
+				if existing then
+					task.defer(player.Character.PivotTo, player.Character, existing.CFrame)
+					return true
+				end
+				return
+			end
+
+			function Jail.recaptureCharacter(character)
+				return Jail.recapture(_K.Service.Players:GetPlayerFromCharacter(character))
+			end
+
+			function Jail.new(player: Player, oldPosition: Vector3?)
+				if Jail.recapture(player) then
+					return
+				end
+
+				local character = player.Character
+				local head = character:FindFirstChild("Head")
+				local humanoid = character:FindFirstChildOfClass("Humanoid")
+				local root = character:FindFirstChild("HumanoidRootPart")
+				if not (player and head and humanoid and root) then
+					return
+				end
+
+				local rootCFrame = root.CFrame
+				local hipHeight = if humanoid.RigType == Enum.HumanoidRigType.R15
+					then humanoid.HipHeight + root.Size.Y / 2
+					else root.Size.Y * 1.5
+				local groundPos = oldPosition or rootCFrame.Position - Vector3.new(0, hipHeight, 0)
+
+				local width = math.max(root.Size.X, root.Size.Z) + 4
+				local size = Vector3.new(width, hipHeight + root.Size.Y / 2 + head.Size.Y + 3, width)
+				local position = groundPos + Vector3.new(0, size.Y / 2, 0)
+				local offset = (size - Vector3.one) / 2
+
+				local kJail = Instance.new("Part")
+				kJail.Name = "kJail"
+				kJail.Anchored = true
+				kJail.Size = size
+				kJail.CanCollide = false
+				kJail.CFrame = CFrame.new(position)
+				kJail.Color = Color3.new(0, 0, 0)
+				kJail.Transparency = 0.3
+				kJail.Material = Enum.Material.Neon
+				kJail.TopSurface = Enum.SurfaceType.Smooth
+				kJail.BottomSurface = Enum.SurfaceType.Smooth
+
+				Jail.parts[player.UserId] = kJail
+				if not Jail.users[player.UserId] then
+					Jail.users[player.UserId] = groundPos
+				end
+
+				local top = kJail:Clone()
+				top.Parent = kJail
+				top.Transparency = 1
+				top.Size = Vector3.new(width, 1, width)
+				top.Position = position + Vector3.new(0, offset.Y, 0)
+
+				local bottom = top:Clone()
+				bottom.Parent = kJail
+				bottom.Position = position - Vector3.new(0, offset.Y, 0)
+
+				local left = top:Clone()
+				left.Parent = kJail
+				left.Size = Vector3.new(1, size.Y, width)
+				left.Position = position - Vector3.new(offset.X, 0, 0)
+
+				local right = left:Clone()
+				right.Parent = kJail
+				right.Position = position + Vector3.new(offset.X, 0, 0)
+
+				local front = top:Clone()
+				front.Parent = kJail
+				front.Size = Vector3.new(width, size.Y, 1)
+				front.Position = position - Vector3.new(0, 0, offset.Z)
+
+				local back = front:Clone()
+				back.Parent = kJail
+				back.Position = position + Vector3.new(0, 0, offset.Z)
+
+				kJail.Parent = workspace
+
+				JailCollide:FireClient(player, kJail)
+
+				root.CFrame = rootCFrame
+
+				local lowerBounds = position - size / 2
+				local upperBounds = position + size / 2
+
+				task.defer(function()
+					repeat
+						task.wait()
+						if
+							player
+							and player.Character
+							and not pointInBounds(player.Character:GetPivot().Position, lowerBounds, upperBounds)
+						then
+							Jail.recapture(player)
+						end
+					until not player or Jail.parts[player.UserId] == nil
+				end)
+
+				return kJail
+			end
+
+			_K.Util.SafePlayerAdded(function(player)
+				player.CharacterAdded:Connect(Jail.recaptureCharacter)
+				local jailPos = Jail.users[player.UserId]
+				if jailPos then
+					if not player.Character then
+						player.CharacterAppearanceLoaded:Wait()
+					end
+					Jail.new(player, jailPos)
+					Jail.recapture(player)
+				end
+			end)
+
+			_K.Service.Players.PlayerRemoving:Connect(function(player)
+				local jail = Jail.parts[player.UserId]
+				if jail then
+					jail:Destroy()
+					Jail.parts[player.UserId] = nil
+				end
+			end)
+
 			return Jail
 		end,
 
 		run = function(context, players)
 			for _, player in players do
-				if Jail.parts[player.UserId] then
+				if context.env.parts[player.UserId] then
 					continue
 				end
 				if player.Character then
-					Jail.new(player)
+					context.env.new(player)
 				end
 			end
 		end,
@@ -1482,6 +1635,7 @@ return {
 		},
 
 		run = function(context, players)
+			local Jail = context._K.Registry.commands.jail.env
 			for _, player in players do
 				Jail.users[player.UserId] = nil
 				local jail = Jail.parts[player.UserId]
@@ -1645,7 +1799,7 @@ return {
 				if player == context.fromPlayer then
 					continue
 				end
-				teleportCharacter(player.Character, context.fromPlayer.Character)
+				context._K.Registry.commands.teleport.env.teleport(player.Character, context.fromPlayer.Character)
 			end
 		end,
 	},
@@ -1663,7 +1817,7 @@ return {
 
 		run = function(context, target)
 			local destination = if typeof(target) == "Vector3" then target else target.Character
-			teleportCharacter(context.fromPlayer.Character, destination)
+			context._K.Registry.commands.teleport.env.teleport(context.fromPlayer.Character, destination)
 		end,
 	},
 	{
@@ -1691,11 +1845,58 @@ return {
 				end
 			end)
 		end,
+		env = function(_K)
+			return {
+				teleport = function(from, to)
+					if not (from and to) then
+						return
+					end
 
+					-- prevent teleporting seats
+					local humanoid = from:FindFirstChildOfClass("Humanoid")
+					if humanoid then
+						if humanoid.SeatPart then
+							local weld = humanoid.SeatPart:FindFirstChild("SeatWeld")
+							if weld then
+								weld:Destroy()
+							end
+						end
+						humanoid.Sit = false
+					end
+
+					-- reset velocity on teleport
+					for _, v in from:GetDescendants() do
+						if v:IsA("BasePart") then
+							v.AssemblyLinearVelocity = Vector3.zero
+							v.AssemblyAngularVelocity = Vector3.zero
+						end
+					end
+
+					-- add a small offset to prevent clipping
+					local cframe
+					if typeof(to) == "Vector3" then
+						cframe = CFrame.new(to) * from:GetPivot().Rotation
+					else
+						local offset = Vector3.new(
+							(math.random(1, 2) - 1) * math.random(2, 4),
+							0,
+							(math.random(1, 2) - 1) * math.random(2, 4)
+						)
+						cframe = to:GetPivot() + offset
+					end
+					from:PivotTo(cframe)
+
+					local player = _K.Service.Players:GetPlayerFromCharacter(from)
+					if player then
+						_K.Remote.Teleport:FireClient(player, cframe)
+					end
+				end,
+			}
+		end,
 		run = function(context, players, target: Player | Vector3)
 			local destination = if typeof(target) == "Vector3" then target else target.Character
 			for _, player in players do
-				teleportCharacter(player.Character, destination)
+				context.env.teleport(player.Character, destination)
 			end
 		end,
 	},
@@ -2497,6 +2698,53 @@ return {
 		end,
 	},
 	{
+		name = "collide",
+		aliases = { "nocollide", "uncollide" },
+		description = "Toggles collisions for one or more player(s) against other player(s).",
+		args = {
+			{
+				type = "players",
+				name = "Player(s)",
+				description = "The player(s) whose collisions to toggle.",
+			},
+		},
+		env = function(_K)
+			local COLLISION_GROUP = "_KNoCollide"
+			_K.Service.PhysicsService:RegisterCollisionGroup(COLLISION_GROUP)
+			_K.Service.PhysicsService:CollisionGroupSetCollidable(COLLISION_GROUP, COLLISION_GROUP, false)
+
+			return {
+				setCollision = function(character: Model, collide: boolean)
+					for _, descendant in character:GetDescendants() do
+						if descendant:IsA("BasePart") then
+							if not descendant:GetAttribute("_KCollisionGroup") then
+								descendant:SetAttribute("_KCollisionGroup", descendant.CollisionGroup)
+							end
+							descendant.CollisionGroup = if collide
+								then descendant:GetAttribute("_KCollisionGroup")
+								else COLLISION_GROUP
+							if collide then
+								descendant:SetAttribute("_KCollisionGroup", nil)
+							end
+						end
+					end
+				end,
+			}
+		end,
+		run = function(context, players: { Player })
+			local collide = context.alias == "collide"
+			for _, player in players do
+				if player.Character then
+					context.env.setCollision(player.Character, collide)
+				end
+			end
+			context._K.Remote.Notify:FireClient(context.fromPlayer, {
+				From = "_K",
+				Text = `<b>Collisions {collide and "enabled" or "disabled"} for the given player(s) or team(s).</b>`,
+			})
+		end,
+	},
+	{
 		name = "whois",
 		aliases = { "userinfo" },
 		description = "Displays detailed information about a player.",
@@ -2514,28 +2762,21 @@ return {
 			local team = player.Team and player.Team.Name or "None"
 			local accountAge = player.AccountAge or "?"
 			local rank, role = context._K.Auth.getRank(player.UserId)
-			local isMuted = context._K.Data.muted and context._K.Data.muted[userId] and "Yes" or "No"
-			local teamColor = player.Team and "#" .. player.Team.TeamColor.Color:ToHex() or "#16a085"
+			local isMuted = (context._K.Data.muted and context._K.Data.muted[userId]) and "Yes" or "No"
+			local teamColor = player.Team and ("#" .. player.Team.TeamColor.Color:ToHex()) or "#16a085"
 			local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 			local playerLocale = context._K.Service.LocalizationService:GetCountryRegionForPlayerAsync(player)
-
-			--? this should probably be moved to a file in Utility
-			local function getFlag(locale)
-				local first = string.byte(string.upper(string.sub(locale, 1, 1))) - 0x41 + 0x1F1E6
-				local second = string.byte(string.upper(string.sub(locale, 2, 2))) - 0x41 + 0x1F1E6
-				return utf8.char(first) .. utf8.char(second)
-			end
 
 			local info = {
 				`<b>Name:</b> {name}`,
 				`<b>DisplayName:</b> {displayName}`,
 				`<b>UserId:</b> {userId}`,
 				`<b>Team:</b> <font color="{teamColor}">{team}</font>`,
-				(player.Team and `<b>Display Color:</b> <font color="#{teamColor}">{teamColor}</font>` or nil),
+				player.Team and `<b>Display Color:</b> <font color="{teamColor}">{teamColor}</font>` or nil,
 				`<b>Account Age:</b> {accountAge} day(s)`,
 				`<b>Rank:</b> {rank}`,
-				`<b>Role:</b> <font color="{role.color or "#2ecc71"}">{role.name}</font>`,
-				`<b>Locale:</b> {getFlag(playerLocale)} {playerLocale}`,
+				`<b>Role:</b> <font color="{role and (role.color or "#2ecc71") or "#2ecc71"}">{role and role.name or "N/A"}</font>`,
+				`<b>Locale:</b> {context._K.Util.String.toFlag(playerLocale)} {playerLocale or "?"}`,
 				`<b>Health:</b> {humanoid and (humanoid.Health .. " / " .. humanoid.MaxHealth) or "N/A"}`,
 				`<b>Muted:</b> {isMuted}`,
 			}

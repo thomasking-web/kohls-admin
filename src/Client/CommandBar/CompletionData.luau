@@ -29,7 +29,7 @@ return function(_K, text, cursorPosition)
 	local rawCommands =
 		_K.Process.rawParse(text, { prefix, unpack(_K.Data.settings.prefix) }, _K.Data.settings.splitKey or "%s")
 	if not rawCommands then
-		table.insert(data.invalid, { "Invalid command", 2, string.sub(text, 2) })
+		table.insert(data.invalid, { "Invalid command string", 2, string.sub(text, 2) })
 		return data -- invalid command string, show valid example
 	end
 
@@ -49,25 +49,32 @@ return function(_K, text, cursorPosition)
 			invalidPermissions = true
 		end
 
-		if cursorPosition < commandArray[1][1] or cursorPosition > commandEnd then
+		if cursorPosition < commandArray[1][1] or cursorPosition > commandEnd then --outside current query
 			if not commandDefinition and not greedy then
 				data.argIndex = 1
 				data.argPos = commandPos
 				data.rawArg = commandText
 				data.query = commandText
-				table.insert(data.invalid, { "Invalid command", commandPos, commandText })
+				local feedback =
+					`Invalid command: {commandText}, did you mean "{_K.Registry.suggestCommandAlias(commandAlias)}"?`
+				table.insert(data.invalid, { feedback, commandPos, commandText })
 				return data
 			elseif commandDefinition and commandDefinition.LocalPlayerAuthorized then
 				local command = Command.new(_K, commandAlias, commandDefinition, commandArray, from, text)
 				command:validate()
 				table.insert(data.commands, command)
+				if command.invalidArg then
+					table.insert(
+						data.invalid,
+						{ command.argMissing or command.invalidMessage, command.invalidPos, command.invalidArg }
+					)
+					return data
+				end
 			end
 			continue -- cursor not within commandArray
 		end
 
-		-- within command
-		-- command suggestions
-		if cursorPosition <= commandPos + #commandText then
+		if cursorPosition <= commandPos + #commandText then -- within command
 			data.argIndex = 1
 			data.argPos = commandPos
 			data.rawArg = commandText
@@ -76,22 +83,17 @@ return function(_K, text, cursorPosition)
 			data.suggestions =
 				_K.Util.Suggest.query(data.query, _K.Registry.types.command.suggestions(data.query, from))
 
-			if #data.suggestions < 1 then
-				table.insert(data.invalid, { "Invalid command", commandPos, commandText })
-				return data
-			end
-
 			local rawSuggestions = data.suggestions
 			data.suggestions = table.create(#data.suggestions)
 			local invalidSuggestions = {}
 			for _, suggestionData in rawSuggestions do
-				local __name, _display, cmd, _query = unpack(suggestionData)
+				local _name, _display, cmd = unpack(suggestionData)
 				if cmd then
 					if cmd.LocalPlayerAuthorized then
 						table.insert(data.suggestions, suggestionData)
 						data.validSuggestion = true
 					else
-						suggestionData[5] = true -- invalid
+						suggestionData[4] = true -- invalid
 						table.insert(invalidSuggestions, suggestionData)
 						data.invalidPermissionsCommand = cmd
 					end
@@ -102,9 +104,14 @@ return function(_K, text, cursorPosition)
 				table.move(invalidSuggestions, 1, #invalidSuggestions, #data.suggestions + 1, data.suggestions)
 			end
 
-			if #data.suggestions < 1 then
-				table.insert(data.invalid, { "Invalid permissions", commandPos, commandText })
-				return data
+			if invalidPermissions then
+				if
+					#data.suggestions == 0
+					or not string.find(string.lower(data.suggestions[1][1]), string.lower(data.query), 1, true)
+				then
+					table.insert(data.invalid, { "Invalid permissions", commandPos, commandText })
+					return data
+				end
 			end
 
 			if commandDefinition and commandDefinition.LocalPlayerAuthorized then
@@ -117,7 +124,9 @@ return function(_K, text, cursorPosition)
 		end
 
 		if not commandDefinition then
-			table.insert(data.invalid, { "Invalid command", commandPos, commandText })
+			local feedback =
+				`Invalid command: {commandText}, did you mean "{_K.Registry.suggestCommandAlias(commandAlias)}"?`
+			table.insert(data.invalid, { feedback, commandPos, commandText })
 			return data
 		elseif invalidPermissions then
 			table.insert(data.invalid, { "Invalid permissions", commandPos, commandText })
@@ -153,8 +162,11 @@ return function(_K, text, cursorPosition)
 				data.skipped = true
 				data.rawQuery = string.sub(arg.skipped, 1, cursorPosition - arg.argPos)
 				data.query = _K.Util.String.stripQuotes(data.rawQuery)
-				data.suggestions = arg.rawType.suggestions
-					and _K.Util.Suggest.query(data.query, arg.rawType.suggestions(data.query, from, arg.definition))
+				local suggestions, values = arg.rawType.suggestions, nil
+				if type(suggestions) == "function" then
+					suggestions, values = arg.rawType.suggestions(data.query, from, arg.definition)
+				end
+				data.suggestions = suggestions and _K.Util.Suggest.query(data.query, suggestions, values)
 				if data.suggestions and #data.suggestions > 0 then
 					break
 				end
@@ -177,9 +189,11 @@ return function(_K, text, cursorPosition)
 				data.query = _K.Util.String.stripQuotes(data.rawQuery)
 				data.transformedArg = transformedArg
 				data.suggestionType = transformedType or data.suggestionType
-				data.suggestions = transformedType
-					and transformedType.suggestions
-					and _K.Util.Suggest.query(data.query, transformedType.suggestions(data.query, from, arg.definition))
+				local suggestions, values = transformedType and transformedType.suggestions, nil
+				if type(suggestions) == "function" then
+					suggestions, values = transformedType.suggestions(data.query, from, arg.definition)
+				end
+				data.suggestions = suggestions and _K.Util.Suggest.query(data.query, suggestions, values)
 			end
 		end
 
@@ -191,7 +205,7 @@ return function(_K, text, cursorPosition)
 					data.rawArg == ""
 					or (
 						data.suggestions
-						and #data.suggestions > 0
+						and #data.suggestions > 1
 						and if type(data.suggestions[1]) == "table"
 							then data.suggestions[1][1] ~= data.rawArg
 							else data.suggestions[1] ~= data.rawArg

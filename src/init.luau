@@ -82,6 +82,7 @@ local _K = {
 	client = nil,
 	pinnedAnnouncement = nil,
 	ready = false,
+	Notify = nil,
 
 	cleanupCommands = {},
 	_serverLock = false,
@@ -163,6 +164,24 @@ function _K.log(text: string, level: LogType, from: number?, filtered: boolean?)
 end
 _K.Logger.logs = _K.Data.logs
 
+function _K.systemNotify(to: number | Player, text: string, isError: boolean?)
+	if type(to) == "number" then
+		to = _K.Service.Players:GetPlayerByUserId(to)
+	end
+	if to then
+		local props = { Text = text, From = "_K" }
+		if isError then
+			props.TextColor3 = Color3.new(1, 0, 0)
+			props.Sound = "Call_Leave"
+		end
+		if _K.IsServer then
+			_K.Remote.Notify:FireClient(to, props)
+		else
+			_K.Notify:FireClient(props)
+		end
+	end
+end
+
 -- register initial UI children
 if _K.IsClient then
 	_K.UI = require(Client:WaitForChild("UI"))
@@ -208,18 +227,30 @@ local function characterAdded(character: Model)
 
 	-- damage logs
 	local alive, lastHealth = true, humanoid.Health
+	local damageBatch = {}
+	local function logDamage(from)
+		local damage = damageBatch[from]
+		damageBatch[from] = nil
+		if not damage then
+			return
+		end
+		damage = math.round(damage)
+		if from and from ~= game then
+			_K.log(`damaged {player} for {damage} damage.`, "DAMAGE", from.UserId)
+		else
+			_K.log(`{player} took {damage} damage.`, "DAMAGE", player.UserId)
+		end
+	end
+	local logDamageDebounce = _K.Util.Function.debounce(1, logDamage)
 	humanoid.HealthChanged:Connect(function(health)
 		if alive then
 			local tag = humanoid:FindFirstChild("creator")
-			local from = tag and tag.Value
+			local from = (tag and tag.Value) or game
 			local damage = lastHealth - health
 			lastHealth = health
-			if damage > 0 then
-				if from then
-					_K.log(`damaged {player} for {damage} damage.`, "DAMAGE", from.UserId)
-				else
-					_K.log(`{player} took {damage} damage.`, "DAMAGE", player.UserId)
-				end
+			if damage > 0 and health >= 0 then
+				damageBatch[from] = (damageBatch[from] or 0) + damage
+				logDamageDebounce(from)
 			end
 		end
 	end)
@@ -229,6 +260,9 @@ local function characterAdded(character: Model)
 		alive = false
 		local tag = humanoid:FindFirstChild("creator")
 		local from = tag and tag.Value
+		for attacker in damageBatch do
+			logDamage(attacker)
+		end
 		if from then
 			_K.log(`died to {from}.`, "DEATH", player.UserId)
 			if typeof(from) == "Instance" and from:IsA("Player") then
@@ -259,10 +293,6 @@ local function playerAdded(player: Player)
 
 	if _K.Auth.banHandler(player) then
 		return
-	end
-
-	if _K.Service.Run:IsStudio() then
-		_K.Auth.userRoleAdd(player.UserId, "creator")
 	end
 
 	for _, role in _K.Data.settings.freeAdmin do
@@ -368,6 +398,14 @@ function _K.initialize(config: Configuration | ModuleScript | { [string]: any },
 		end
 	end
 
+	task.spawn(function() -- populate ban names
+		for userId, ban in _K.Data.bans do
+			if not ban[1] then
+				ban[1] = Util.getUserInfo(userId).Username
+			end
+		end
+	end)
+
 	if settings.commands and #settings.commands > 0 then
 		for role, commands in settings.commands do
 			local roleData = _K.Data.roles[role]
@@ -381,17 +419,25 @@ function _K.initialize(config: Configuration | ModuleScript | { [string]: any },
 		end
 	end
 
-	local dataStoreScope = "_K_0.1" -- WARN: REQUIRES DATA MIGRATION WHEN CHANGED
-	if _K.Data.IS_PRIVATE_SERVER then
-		for role, users in settings.userRoles do
-			if table.find(users, game.PrivateServerOwnerId) then
-				dataStoreScope ..= game.PrivateServerOwnerId
-				break
+	task.spawn(function()
+		repeat
+			task.wait()
+		until _K.creatorId
+
+		_K.Data.SEPARATE_DATASTORE = _K.Data.IS_PRIVATE_SERVER and game.PrivateServerOwnerId ~= _K.creatorId
+
+		local dataStoreScope = "_K_0.1" -- WARN: REQUIRES DATA MIGRATION WHEN CHANGED
+		if _K.Data.SEPARATE_DATASTORE then
+			for role, users in settings.userRoles do
+				if table.find(users, game.PrivateServerOwnerId) then
+					dataStoreScope ..= game.PrivateServerOwnerId
+					break
+				end
 			end
 		end
-	end
 
-	task.spawn(_K.Data.initialize, dataStoreScope)
+		_K.Data.initialize(dataStoreScope)
+	end)
 
 	-- define user roles
 	for role, users in settings.userRoles do
@@ -569,7 +615,7 @@ function _K.initialize(config: Configuration | ModuleScript | { [string]: any },
 			task.delay(2, function()
 				_K.Remote.Notify:FireClient(player, {
 					From = "_K",
-					Text = `Your game is unable to participate in the <b>Kohl's Admin Games Hub</b> because <b><font color='#f00'>HTTP Requests are disabled in your game settings</font></b>.\n\n<i><font transparency='0.5'>Enable HTTP Requests in your Roblox game settings to avoid missing out on free advertising and other benefits!</font></i>`,
+					Text = `Your game is unable to participate in the <b>Kohl's Admin Games Hub</b> because <b><font color='#{_K.Data.settings.themeInvalid:ToHex()}'>HTTP Requests are disabled in your game settings</font></b>.\n\n<i><font transparency='0.5'>Enable HTTP Requests in your Roblox game settings to avoid missing out on free advertising and other benefits!</font></i>`,
 				})
 			end)
 		end
@@ -602,7 +648,7 @@ function _K.initialize(config: Configuration | ModuleScript | { [string]: any },
 				continue
 			end
 
-			if string.find(key, "theme", 1, true) and (themeAuthority ~= "Server") then
+			if string.find(key, "theme", 1, true) and (themeAuthority == "Studio") then
 				continue
 			end
 

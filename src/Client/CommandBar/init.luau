@@ -180,7 +180,7 @@ UI.edit(Tooltip, {
 
 TooltipLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 	local size = TooltipLayout.AbsoluteContentSize
-	TooltipFrame.Size = UDim2.fromOffset(math.max(256, size.X), size.Y)
+	TooltipFrame.Size = UDim2.fromOffset(TooltipFrame.AbsoluteSize.X, size.Y + UI.Theme.PaddingHalf._value.Offset)
 end)
 
 local SuggestionFrame = UI.new "TextButton" {
@@ -226,15 +226,23 @@ local invalidInlineFormat =
 local suggestFormat = `<font transparency="0.5">%s</font>%s<font transparency="0.5">%s</font>`
 local invalidSuggestFormat = `<font color="#f00">{suggestFormat}</font>`
 
+local function updateInvalidColor(invalidColor)
+	invalidColor = invalidColor:ToHex()
+	invalidInlineFormat =
+		`<font transparency="0.33">%s<b><font color="#{invalidColor}" transparency="0.66">%s<font transparency="0">%s</font>%s</font></b>%s</font>`
+	invalidSuggestFormat = `<font color="#{invalidColor}">{suggestFormat}</font>`
+end
+UI.Theme.Invalid:hook(updateInvalidColor)
+updateInvalidColor(UI.Theme.Invalid._value)
+
 local suggestionIndex = 1
 local suggestionLabels = {}
 
 local updateCompletion, currentCompletion, currentCompletionData
 local function updateCompletionData()
-	for _, label in suggestionLabels do
-		label:Destroy()
+	if Input._input.SelectionStart ~= -1 then
+		return
 	end
-	table.clear(suggestionLabels)
 	suggestionIndex = 1
 	currentCompletionData = CompletionData(_K, Input._input.Text, Input._input.CursorPosition)
 	updateCompletion()
@@ -261,6 +269,23 @@ local completeSuggestion = _K.Util.Function.throttle(0.1, function()
 	task.defer(updateCompletionData)
 end)
 
+local function formatSuggestionLabel(label, display, query, invalid)
+	local startIndex, endIndex = string.find(string.lower(display), query, 1, true)
+	if not startIndex then
+		startIndex, endIndex = 0, 0
+	end
+
+	label.Text = string.format(
+		if invalid then invalidSuggestFormat else suggestFormat,
+		if startIndex > 1 then _K.Util.String.escapeRichText(string.sub(display, 1, startIndex - 1)) else "",
+		_K.Util.String.escapeRichText(string.sub(display, startIndex, endIndex)),
+		_K.Util.String.escapeRichText(string.sub(display, endIndex + 1))
+	)
+
+	return TextService:GetTextSize(display, label.TextSize, label.Font, Vector2.zero).X
+		+ UI.Theme.PaddingDouble._value.Offset
+end
+
 local suggestionUpdating
 local function updateSuggestionLabels(data)
 	if suggestionUpdating then
@@ -268,24 +293,22 @@ local function updateSuggestionLabels(data)
 	end
 	suggestionUpdating = true
 
-	local query = string.lower(data.query)
-	for _, label in suggestionLabels do
-		label:Destroy()
-	end
-	table.clear(suggestionLabels)
+	local query = string.lower(_K.Util.String.trim(data.query))
 
 	local amount = math.min(7, #data.suggestions - 1)
 	local start = math.max(1, suggestionIndex - 7)
 
+	local suggestionWidth = 256
 	for i = start, start + amount do
 		local suggestion = data.suggestions[i]
-		local text, display, value, suggestQuery, invalid = unpack(suggestion)
+		local text, display, value, invalid = unpack(suggestion)
 		local frame = SuggestionFrame:Clone()
 		local label = frame:FindFirstChildOfClass("TextLabel")
 		frame.LayoutOrder = i
 		frame.BackgroundTransparency = if i == suggestionIndex then 0.9 else 0.95
-		display = display or suggestQuery or text
+		display = display or text
 
+		local widthOffset = 0
 		local valueType = typeof(value)
 		if valueType == "Instance" and value:IsA("Player") then
 			UI.new "ImageLabel" {
@@ -297,6 +320,7 @@ local function updateSuggestionLabels(data)
 				SizeConstraint = Enum.SizeConstraint.RelativeYY,
 				Image = `rbxthumb://type=AvatarHeadShot&id={value.UserId}&w=48&h=48`,
 			}
+			widthOffset = label.AbsoluteSize.Y
 		elseif valueType == "Color3" or valueType == "BrickColor" then
 			UI.new "Frame" {
 				Parent = frame,
@@ -306,6 +330,7 @@ local function updateSuggestionLabels(data)
 				Size = UDim2.new(1, 0, 1, 0),
 				SizeConstraint = Enum.SizeConstraint.RelativeYY,
 			}
+			widthOffset = label.AbsoluteSize.Y
 		elseif valueType == "EnumItem" then
 			if value.EnumType == Enum.Font then
 				frame.TextLabel.Font = value
@@ -321,6 +346,14 @@ local function updateSuggestionLabels(data)
 					SizeConstraint = Enum.SizeConstraint.RelativeYY,
 					Image = `rbxthumb://type=AvatarHeadShot&id={value.userId or value.UserId}&w=48&h=48`,
 				}
+				widthOffset = label.AbsoluteSize.Y
+				task.spawn(function()
+					display ..= ` ({value.Name or _K.Util.getUserInfo(value.UserId).Username})`
+
+					local textWidth = formatSuggestionLabel(label, display, query, invalid)
+					suggestionWidth = math.max(suggestionWidth, textWidth + widthOffset)
+					TooltipFrame.Size = UDim2.fromOffset(suggestionWidth, TooltipLayout.AbsoluteContentSize.Y)
+				end)
 			end
 		elseif data.suggestionType.name == "image" or data.suggestionType.name == "images" and data.arg then
 			UI.new "ImageLabel" {
@@ -332,16 +365,11 @@ local function updateSuggestionLabels(data)
 				SizeConstraint = Enum.SizeConstraint.RelativeYY,
 				Image = data.arg.parsedArgs[1],
 			}
+			widthOffset = label.AbsoluteSize.Y
 		end
 
-		local startIndex, endIndex = string.find(string.lower(display), query, 1, true)
-
-		label.Text = string.format(
-			if invalid then invalidSuggestFormat else suggestFormat,
-			if startIndex > 1 then _K.Util.String.escapeRichText(string.sub(display, 1, startIndex - 1)) else "",
-			_K.Util.String.escapeRichText(string.sub(display, startIndex, endIndex)),
-			_K.Util.String.escapeRichText(string.sub(display, endIndex + 1))
-		)
+		local textWidth = formatSuggestionLabel(label, display, query, invalid)
+		suggestionWidth = math.max(suggestionWidth, textWidth + widthOffset)
 
 		frame.Activated:Connect(function()
 			Input._input:CaptureFocus()
@@ -352,6 +380,9 @@ local function updateSuggestionLabels(data)
 		frame.Parent = TooltipFrame
 		table.insert(suggestionLabels, frame)
 	end
+
+	TooltipFrame.Size = UDim2.fromOffset(suggestionWidth, TooltipLayout.AbsoluteContentSize.Y)
+
 	suggestionUpdating = false
 end
 
@@ -417,9 +448,12 @@ end
 local function invalidSuggestion(data, err, pos, text)
 	validState:set(false)
 	Input.DisplayText:set(
-		`<font transparency="0.33">{_K.Util.String.escapeRichText(string.sub(data.message, 1, pos - 1))}<font color="#f00" transparency="0"><b>{_K.Util.String.escapeRichText(
-			text
-		)}</b></font>{_K.Util.String.escapeRichText(string.sub(data.message, pos + #text))}</font>`
+		string.format(
+			invalidSuggestFormat,
+			_K.Util.String.escapeRichText(string.sub(data.message, 1, pos - 1)),
+			_K.Util.String.escapeRichText(text),
+			_K.Util.String.escapeRichText(string.sub(data.message, pos + #text))
+		)
 	)
 	-- TODO: command definition
 	Tooltip.Visible = data.argDefinition ~= nil
@@ -431,36 +465,30 @@ local function invalidSuggestion(data, err, pos, text)
 			_K.Util.String.escapeRichText(data.suggestionType.name) .. if data.argDefinition.optional then "?" else "",
 			data.argDefinition.description
 		)
-	for _, label in suggestionLabels do
-		label:Destroy()
-	end
-	-- FIX: inline all the invalids and only show tooltip for first
-	table.clear(suggestionLabels)
 
 	local frame = SuggestionFrame:Clone()
 	local label = frame:FindFirstChildOfClass("TextLabel")
-	label.Text = `<font color="#f00"><b>{_K.Util.String.escapeRichText(err)}</b></font>`
+	label.Text = `<font color="#{UI.Theme.Invalid._value:ToHex()}"><b>{_K.Util.String.escapeRichText(err)}</b></font>`
 	frame.Parent = TooltipFrame
 	-- show highlight
 	table.insert(suggestionLabels, frame)
 
+	TooltipFrame.Size = UDim2.fromOffset(
+		math.max(TooltipFrame.AbsoluteSize.X, label.AbsoluteSize.X),
+		TooltipLayout.AbsoluteContentSize.Y
+	)
 	TooltipFrame.Visible = true
 
 	if not data.suggestions or not data.suggestions[suggestionIndex] then
 		return
 	end
 
-	local currentSuggestion = data.suggestions[suggestionIndex]
-	local suggestionText, _suggestionDisplay, suggestionValue, suggestionQuery = unpack(currentSuggestion)
+	local suggestion, _, value = unpack(data.suggestions[suggestionIndex])
 	if data.argIndex == 1 then -- command
 		-- TODO: inline argument types if command
 		-- show command aliases too!
-		Tooltip.Text = string.format(
-			argumentFormat,
-			_K.Util.String.escapeRichText(suggestionQuery or suggestionText),
-			"command",
-			suggestionValue.description
-		)
+		Tooltip.Text =
+			string.format(argumentFormat, _K.Util.String.escapeRichText(suggestion), "command", value.description)
 	end
 	return
 end
@@ -469,6 +497,12 @@ local commandHistory = {}
 updateCompletion = function()
 	local data = currentCompletionData
 	currentCompletion = nil
+
+	Input.DisplayText:set(_K.Util.String.escapeRichText(Input._input.Text))
+	for _, label in suggestionLabels do
+		label:Destroy()
+	end
+	table.clear(suggestionLabels)
 
 	if data.suggestionType == "History" then
 		TooltipFrame.Visible = false
@@ -483,8 +517,10 @@ updateCompletion = function()
 	-- handle validation hints
 	-- TODO: somehow show validated arguments/text as green :)
 	for _, invalid in data.invalid do
-		validState:set(false)
 		invalidSuggestion(data, unpack(invalid))
+	end
+
+	if not data.suggestionType then
 		return
 	end
 
@@ -542,7 +578,7 @@ updateCompletion = function()
 	-- move tooltip to start of query
 	-- FIX: adjust with inputoffset
 	local argX = TextService:GetTextSize(
-		string.sub(string.gsub(data.message, "\n", " "), 1, data.argPos - 1),
+		string.sub(string.gsub(string.gsub(data.message, "\n", " "), "\r", " "), 1, data.argPos - 1),
 		Tooltip.TextSize,
 		Tooltip.Font,
 		Vector2.zero
@@ -564,24 +600,18 @@ updateCompletion = function()
 
 	local arg = _K.Util.String.trim(data.rawArg)
 	local endPos = data.argPos + #arg
-	local currentSuggestion = data.suggestions[suggestionIndex]
-	local suggestionText, _suggestionDisplay, suggestionValue, suggestionQuery, suggestionInvalid =
-		unpack(currentSuggestion)
-	suggestionQuery = suggestionQuery or suggestionText
+	local suggestion, _, value, invalid = unpack(data.suggestions[suggestionIndex])
 
-	if
-		not string.find(string.lower(suggestionText), `{string.lower(arg)}`, 1, true)
-		and not (suggestionQuery and string.find(string.lower(suggestionQuery), `[{string.lower(arg)}`, 1, true))
-	then
-		suggestionInvalid = true
+	if not string.find(string.lower(suggestion), `{string.lower(_K.Util.String.stripQuotes(arg))}`, 1, true) then
+		invalid = true
 		data.validSuggestion = false
 	end
 
-	if suggestionInvalid and not data.validSuggestion then
+	if invalid and not data.validSuggestion then
 		validState:set(false)
 	end
 
-	local completion = suggestionText
+	local completion = suggestion
 	local preCompletion = string.sub(data.message, 1, data.argPos - 1)
 	local postCompletion = string.sub(data.message, endPos)
 	local quote = string.match(preCompletion, '(["`])$')
@@ -595,32 +625,32 @@ updateCompletion = function()
 		completion = `"{completion}"`
 	end
 
-	currentCompletion = { data.argPos + #completion, preCompletion .. completion .. postCompletion }
+	currentCompletion = { data.argPos + #completion, preCompletion .. completion .. postCompletion, invalid }
 
 	-- inline format (preceding message, pre query suggestion, query, post query suggestion, post query message)
 	-- FIX: how to not escape invalid/valid rich text coloring?
 	-- need a way to merge it somehow? (or don't use richtext maybe red underline instead! with a button you can hover to show error tooltip :)
-	local startIndex, endIndex = string.find(string.lower(suggestionQuery), string.lower(data.query), 1, true)
+	local query = string.lower(_K.Util.String.trim(data.query))
+	local startIndex, endIndex = string.find(string.lower(suggestion), query, 1, true)
+	if not startIndex then
+		startIndex, endIndex = 1, #suggestion
+	end
 
 	Input.DisplayText:set(
 		string.format(
-			if suggestionInvalid then invalidInlineFormat else inlineFormat,
+			if invalid then invalidInlineFormat else inlineFormat,
 			_K.Util.String.escapeRichText(preCompletion),
-			if startIndex > 1 then _K.Util.String.escapeRichText(string.sub(suggestionQuery, 1, startIndex - 1)) else "",
+			if startIndex > 1 then _K.Util.String.escapeRichText(string.sub(suggestion, 1, startIndex - 1)) else "",
 			_K.Util.String.escapeRichText(data.rawQuery or data.query),
-			_K.Util.String.escapeRichText(string.sub(suggestionQuery, endIndex + 1)),
+			_K.Util.String.escapeRichText(string.sub(suggestion, endIndex + 1)),
 			_K.Util.String.escapeRichText(postCompletion)
 		)
 	)
 
 	-- show completion tooltip
 	if data.argIndex == 1 then -- command
-		Tooltip.Text = string.format(
-			argumentFormat,
-			_K.Util.String.escapeRichText(suggestionQuery),
-			"command",
-			suggestionValue.description
-		)
+		Tooltip.Text =
+			string.format(argumentFormat, _K.Util.String.escapeRichText(suggestion), "command", value.description)
 	end
 
 	if data.argDefinition or data.argIndex == 1 then
@@ -664,7 +694,6 @@ end
 
 local function hideCommandBar()
 	if CommandBar.Visible then
-		Input._input.TextEditable = false
 		CommandBar.Visible = false
 		if _K.client then
 			_K.client.TopbarPlus.setTopbarEnabled(true)
@@ -710,7 +739,6 @@ return {
 
 		prefix = _K.getCommandPrefix()
 		Input.Value:set(prefix, true)
-		Input._input.TextEditable = false
 		CommandBar.Parent = UI.TopbarFrame
 		_K.client.hotkeys.commandBar = { key = UI.state(Enum.KeyCode.Semicolon), mods = {}, callback = self.show }
 		_K.client.CommandBarState = { validState, indicatorColor }
@@ -759,46 +787,40 @@ return {
 				if not UserInputService:IsKeyDown(Enum.KeyCode.Tab) then
 					task.defer(updateCompletionData)
 				end
+			else
+			end
+		end)
+		Input._input:GetPropertyChangedSignal("SelectionStart"):Connect(function()
+			if Input._input.SelectionStart ~= -1 then
+				if validState._value == false then
+					validState:set(nil)
+				end
+				clearCompletion()
+			else
+				updateCompletionData()
 			end
 		end)
 
 		Input._input.Focused:Connect(function()
-			-- prevent input hotkey from being captured
-			task.delay(0, function()
-				if CommandBar.Visible then
-					Input._input.TextEditable = true
-				end
-			end)
+			Input.Value:set(_K.Util.String.trimEnd(Input._input.Text), true)
 		end)
 
 		Input._input.FocusLost:Connect(function(enterPressed)
 			if enterPressed then
-				Input._input.TextEditable = false
-
 				local data = currentCompletionData
 				if #data.invalid > 0 then
-					validState:set(false)
 					UI.Sound.Negative:Play()
 					return Input._input:CaptureFocus()
 				end
 
 				if Input._input.Text ~= prefix and #data.commands < 1 then
-					validState:set(false)
 					UI.Sound.Negative:Play()
-					invalidSuggestion(data, "Invalid command", data.argPos, data.rawArg)
 					return Input._input:CaptureFocus()
 				end
 
 				for _, command in data.commands do
 					if command.invalidArg then
-						validState:set(false)
 						UI.Sound.Negative:Play()
-						invalidSuggestion(
-							data,
-							command.argMissing or command.invalidMessage,
-							command.invalidPos,
-							command.invalidArg
-						)
 						return Input._input:CaptureFocus()
 					end
 				end
@@ -810,7 +832,12 @@ return {
 					return
 				end
 
-				if currentCompletion and data.suggestionType ~= "History" then
+				if
+					currentCompletion
+					and not currentCompletion[4]
+					and data.suggestionType ~= "History"
+					and #data.suggestions > 1
+				then
 					fillSuggestion()
 					task.defer(Input._input.ReleaseFocus, Input._input)
 				end
@@ -849,6 +876,12 @@ return {
 				Input.Value:set(prefix .. text, true)
 				Input._input.CursorPosition += prefixLen
 				return
+			else -- trim whitespace after prefix
+				local trimmed = prefix .. _K.Util.String.trimStart(string.sub(text, prefixLen + 1))
+				if trimmed ~= Input._input.Text then
+					Input.Value:set(trimmed, true)
+					return
+				end
 			end
 
 			if text ~= prefix then
@@ -866,6 +899,7 @@ return {
 			_K.client.TopbarPlus.setTopbarEnabled(false)
 			coreGuiEnabled(false)
 			CommandBar.Visible = true
+			task.wait()
 			Input._input:CaptureFocus()
 		end
 	end,

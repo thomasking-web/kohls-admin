@@ -34,9 +34,10 @@ local function dataLimitWarning(size, dataType)
 				or Auth.hasCommand(player.UserId, "members")
 				or Auth.hasPermission(player.UserId, "settings")
 			then
+				local invalidColor = Data.settings.themeInvalid:ToHex()
 				Remote.Notify:FireClient(player, {
 					From = "_K",
-					Text = `<b><font color="#f00">You're approaching the limit of Roblox DataStores!</font>\n\tConsider removing some {dataType}s.</b>\n\n<b>Data Usage:</b> {string.format(
+					Text = `<b><font color="#{invalidColor}">You're approaching the limit of Roblox DataStores!</font>\n\tConsider removing some {dataType}s.</b>\n\n<b>Data Usage:</b> {string.format(
 						"%.01f",
 						ratio * 100
 					)}%`,
@@ -143,16 +144,29 @@ local function syncMain(result)
 		end
 		data.name, data[1] = data[1], nil
 		data.persist, data[2] = data[2], nil
-		data.roles = if Data.members[key] then Data.members[key].roles else data.persist
+
+		-- filter out invalid roleIds
+		local persist = {}
+		for _, roleId in data.persist do
+			if Data.roles[roleId] then
+				table.insert(persist, roleId)
+			else
+				warn(`Invalid roleId: {roleId}, did you change the role _key?`)
+				continue
+			end
+		end
+		data.persist = persist
+
+		-- append saved roles to cached roles
+		data.roles = if Data.members[key] then Data.members[key].roles else table.clone(data.persist)
 		if data.persist ~= data.roles then
-			for _, role in data.persist do
-				if not table.find(data.roles, role) then
-					table.insert(data.roles, role)
+			for _, roleId in data.persist do
+				if data.persist ~= data.roles and not table.find(data.roles, roleId) then
+					table.insert(data.roles, roleId)
 				end
 			end
-		else
-			data.roles = table.clone(data.roles)
 		end
+
 		table.sort(data.persist, Auth.roleIdSort)
 		table.sort(data.roles, Auth.roleIdSort)
 	end

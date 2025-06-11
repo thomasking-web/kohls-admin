@@ -65,7 +65,7 @@ return {
 					},
 				}
 				existing = hint
-				task.delay(duration or 4 + 0.125 * #message, game.Destroy, hint)
+				task.delay(duration or 4 + 0.0625 * #message, game.Destroy, hint)
 			end)
 		end,
 		env = function(_K)
@@ -74,7 +74,7 @@ return {
 		run = function(context, message: string)
 			local ok, result = context._K.Util.String.filterResult(message, context.from)
 			if not ok then
-				return
+				return result
 			end
 			for _, player in Players:GetPlayers() do
 				task.spawn(function()
@@ -82,6 +82,7 @@ return {
 					context.env.remote:FireClient(player, `<b>{context.fromPlayer}:</b> {msg}`)
 				end)
 			end
+			return
 		end,
 	},
 	{
@@ -103,7 +104,7 @@ return {
 		run = function(context, players: { Player }, message: string)
 			local ok, result = context._K.Util.String.filterResult(message, context.from)
 			if not ok then
-				return
+				return result
 			end
 			for _, player in players do
 				task.spawn(function()
@@ -111,6 +112,7 @@ return {
 					context._K.Remote.Hint:FireClient(player, `<b>{context.fromPlayer}:</b> {msg}`)
 				end)
 			end
+			return
 		end,
 	},
 	{
@@ -128,7 +130,7 @@ return {
 		run = function(context, message)
 			local ok, result = context._K.Util.String.filterResult(message, context.from)
 			if not ok then
-				return
+				return result
 			end
 			for _, player in Players:GetPlayers() do
 				task.spawn(function()
@@ -139,6 +141,82 @@ return {
 					})
 				end)
 			end
+			return
+		end,
+	},
+	{
+		name = "fullmessage",
+		aliases = { "fm", "fmsg" },
+		description = "Sends a full screen message to everyone in the server.",
+		args = {
+			{
+				type = "rawString",
+				name = "Message",
+				description = "The message to send.",
+			},
+		},
+		envClient = function(_K)
+			local existing
+			_K.Remote.FullScreenMessage.OnClientEvent:Connect(function(from: number, message: string, duration: number?)
+				if existing then
+					existing:Destroy()
+				end
+				local msg = _K.UI.new "TextLabel" {
+					Name = "Message",
+					Parent = _K.UI.LayerTop,
+					AutomaticSize = Enum.AutomaticSize.Y,
+					Size = UDim2.new(1, 0, 1, 0),
+					BackgroundColor3 = _K.UI.Theme.Primary,
+					BackgroundTransparency = _K.UI.Theme.Transparency,
+					Font = _K.UI.Theme.Font,
+					TextSize = _K.UI.Theme.FontSizeDouble,
+					TextColor3 = _K.UI.Theme.PrimaryText,
+					TextStrokeColor3 = _K.UI.Theme.Primary,
+					TextStrokeTransparency = _K.UI.Theme.TextStrokeTransparency,
+					Text = message,
+					TextWrapped = true,
+					RichText = true,
+
+					_K.UI.new "UIPadding" {
+						PaddingLeft = _K.UI.Theme.PaddingDouble,
+						PaddingRight = _K.UI.Theme.PaddingDouble,
+					},
+				}
+				local userFrame = _K.client.UserFrame(from)
+				userFrame.Icon.Image = `rbxthumb://type=AvatarHeadShot&id={from}&w=150&h=150`
+				_K.UI.edit(userFrame, {
+					Parent = msg,
+					AnchorPoint = Vector2.new(0.5, 0),
+					Position = UDim2.new(0.5, 0, 0.05, 0),
+					_K.UI.new "UIScale" {
+						Scale = 2,
+					},
+				})
+				local displaySize = _K.UI.state(userFrame.From.From, "AbsoluteSize")
+				_K.UI.edit(userFrame.From.Badge, {
+					Position = _K.UI.compute(function(use)
+						return UDim2.fromOffset(use(displaySize).X / 2 + 4, 0)
+					end),
+				})
+				existing = msg
+				task.delay(duration or 4 + 0.0625 * #message, game.Destroy, msg)
+			end)
+		end,
+		env = function(_K)
+			return { remote = _K.Remote.FullScreenMessage }
+		end,
+		run = function(context, message)
+			local ok, result = context._K.Util.String.filterResult(message, context.from)
+			if not ok then
+				return result
+			end
+			for _, player in Players:GetPlayers() do
+				task.spawn(function()
+					local msg = context._K.Util.String.filterResultForUser(result, context.from, player.UserId)
+					context.env.remote:FireClient(player, context.from, msg)
+				end)
+			end
+			return
 		end,
 	},
 	{
@@ -161,7 +239,7 @@ return {
 		run = function(context, players, message)
 			local ok, result = context._K.Util.String.filterResult(message, context.from)
 			if not ok then
-				return
+				return result
 			end
 			for _, player in players do
 				task.spawn(function()
@@ -169,6 +247,7 @@ return {
 					context._K.Remote.Notify:FireClient(player, { Text = msg, From = context.from })
 				end)
 			end
+			return
 		end,
 	},
 	{
@@ -191,7 +270,7 @@ return {
 		run = function(context, players, message)
 			local ok, result = context._K.Util.String.filterResult(message, context.from)
 			if not ok then
-				return
+				return result
 			end
 			for _, player in players do
 				task.spawn(function()
@@ -202,6 +281,7 @@ return {
 					})
 				end)
 			end
+			return
 		end,
 	},
 	{
@@ -399,8 +479,10 @@ return {
 			task.delay(30, coroutine.resume, tasks.running)
 			tasks:wait()
 
+			local validColor = context._K.Data.settings.themeValid:ToHex()
+			local invalidColor = context._K.Data.settings.themeInvalid:ToHex()
 			context._K.Remote.Notify:FireClient(context.fromPlayer, {
-				Text = `<font transparency="0.5">The results are in!</font>\n\n<b>{message}</b>\n\t<font color="#0f0"><b><sc>yes</sc></b>\t{yes}</font>\n\t<font color="#f00"><b><sc>no</sc></b> \t{no}</font>`,
+				Text = `<font transparency="0.5">The results are in!</font>\n\n<b>{message}</b>\n\t<font color="#{validColor}"><b><sc>yes</sc></b>\t{yes}</font>\n\t<font color="#{invalidColor}"><b><sc>no</sc></b> \t{no}</font>`,
 			})
 		end,
 	},
@@ -655,7 +737,7 @@ return {
 	},
 	{
 		name = "fly",
-		description = "Enables flight on one or more player(s).",
+		description = "Enables flight for one or more player(s).",
 		args = {
 			{
 				type = "players",
@@ -665,7 +747,7 @@ return {
 			{
 				type = "number",
 				name = "Speed",
-				description = "The flight speed, defaults to 256.",
+				description = "The maximum flight speed, defaults to 128.",
 				optional = true,
 			},
 		},
@@ -674,29 +756,23 @@ return {
 				local player = _K.Service.Players:GetPlayerByUserId(userId)
 				if player and not _K.Auth.hasCommand(userId, _K.Registry.commands.fly) then
 					player:SetAttribute("_KFly", nil)
-					player:SetAttribute("_KNoclip", nil)
+					player:SetAttribute("_KNoClip", nil)
 				end
 			end)
-		end,
-
-		runClient = function(context, players)
-			if table.find(players, context.fromPlayer) then
-				context._K.client.Character.tryFlyNoclip()
-			end
 		end,
 		run = function(context, players, speed)
 			for _, player in players do
 				if not player:GetAttribute("_KFly") then
 					context._K.Remote.Notify:FireClient(player, { Text = `Double tap <b>jump</b> to toggle fly.` })
 				end
-				player:SetAttribute("_KNoclip", nil)
-				player:SetAttribute("_KFly", if speed then speed else 256)
+				player:SetAttribute("_KFly", speed or 128)
+				player:SetAttribute("_KNoClip", nil)
 			end
 		end,
 	},
 	{
 		name = "unfly",
-		description = "Disables flight on one or more player(s).",
+		description = "Disables flight for one or more player(s).",
 		args = {
 			{
 				type = "players",
@@ -708,51 +784,50 @@ return {
 		run = function(context, players)
 			for _, player in players do
 				player:SetAttribute("_KFly", nil)
-				player:SetAttribute("_KNoclip", nil)
+				player:SetAttribute("_KNoClip", nil)
 			end
 		end,
 	},
-
 	{
 		name = "noclip",
-		description = "Disables collisions on one or more player(s).",
+		description = "Enables noclip for one or more player(s).",
 		args = {
 			{
 				type = "players",
 				name = "Player(s)",
-				description = "The player(s) whose collisions to disable.",
+				description = "The player(s) to noclip.",
+			},
+			{
+				type = "boolean",
+				name = "Flight",
+				description = "If flight should be enabled, defaults to enabled.",
+				optional = true,
 			},
 			{
 				type = "number",
 				name = "Speed",
-				description = "The flight speed, defaults to 256.",
+				description = "The maximum flight speed, defaults to 128.",
 				optional = true,
 			},
 		},
-
-		runClient = function(context, players)
-			if table.find(players, context.fromPlayer) then
-				context._K.client.Character.tryFlyNoclip()
-			end
-		end,
-		run = function(context, players, speed)
+		run = function(context, players, flying: boolean?, speed: number?)
 			for _, player in players do
 				if not player:GetAttribute("_KDevCameraOcclusionMode") then
 					player:SetAttribute("_KDevCameraOcclusionMode", player.DevCameraOcclusionMode)
 					player.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Invisicam
 				end
-				if not player:GetAttribute("_KNoclip") then
+				if not player:GetAttribute("_KNoClip") then
 					context._K.Remote.Notify:FireClient(player, { Text = `Double tap <b>jump</b> to toggle noclip.` })
 				end
-				player:SetAttribute("_KFly", nil)
-				player:SetAttribute("_KNoclip", if speed then speed else 256)
+				player:SetAttribute("_KFly", if flying == false then nil else speed or 128)
+				player:SetAttribute("_KNoClip", true)
 			end
 		end,
 	},
 	{
 		name = "clip",
 		aliases = { "unnoclip" },
-		description = "Disables noclip on one or more player(s).",
+		description = "Disables noclip for one or more player(s).",
 		args = {
 			{
 				type = "players",
@@ -769,7 +844,7 @@ return {
 					player:SetAttribute("_KDevCameraOcclusionMode", nil)
 				end
 				player:SetAttribute("_KFly", nil)
-				player:SetAttribute("_KNoclip", nil)
+				player:SetAttribute("_KNoClip", nil)
 			end
 		end,
 	},

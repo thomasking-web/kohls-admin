@@ -1,6 +1,5 @@
 local BaseClass = require(script.Parent.BaseClass)
 local UI = require(script.Parent.Parent)
-local UIS = game:GetService("UserInputService")
 
 local Menu = {}
 Menu.__index = Menu
@@ -23,7 +22,7 @@ function Menu.new(definition)
 
 	local listContentSize = UI.state(new._list, "AbsoluteContentSize")
 
-	new._menu = UI.new "ScrollingFrame" {
+	new._content = UI.new "ScrollingFrame" {
 		Name = "Menu",
 		ZIndex = 100,
 		BackgroundTransparency = 1,
@@ -58,7 +57,7 @@ function Menu.new(definition)
 		AutoButtonColor = false,
 		Text = "",
 
-		new._menu,
+		new._content,
 		UI.new "UICorner" {
 			CornerRadius = UI.Theme.CornerRadius,
 		},
@@ -103,41 +102,25 @@ function Menu.new(definition)
 		})
 	end
 
-	local connection = nil
-	local function makeConnection()
-		connection = UIS.InputBegan:Connect(function(Input: InputObject, GPE: boolean)
-			if Input.UserInputType ~= Enum.UserInputType.MouseButton1 then
-				return
-			end
-
-			local mouse = UIS:GetMouseLocation() :: Vector2
-			local boundsTL, boundsBR =
-				(UI.peek(new._instance.AbsolutePosition) + Vector2.new(0, UI.peek(UI.TopbarInset).Height)), --calculate bounds, inlcuding top bar inset because roblox is hell
-				(UI.peek(new._instance.AbsolutePosition) + UI.peek(new._instance.AbsoluteSize) + Vector2.new(
-					0,
-					UI.peek(UI.TopbarInset).Height
-				))
-			if
-				(mouse.X > boundsTL.X and mouse.Y > boundsTL.Y) --box bounds check, ty random dev forum post
-				and (mouse.X < boundsBR.X and mouse.Y < boundsBR.Y)
-			then
-				return --mouse is within bounds
-			end
-			UI.deactivateState(new.Visible, "floating")
-		end)
-	end
-
-	new._compute = UI.compute(function(use)
-		if use(new.Visible) then
-			makeConnection()
-		else
-			if connection :: RBXScriptSignal then
-				connection:Disconnect()
-			end
-		end
-	end)
-
-	new.Adornee:hook(onAdornee)
+	UI.edit(new._instance, {
+		[UI.Clean] = {
+			new.Adornee:hook(onAdornee),
+			UI.UserInputService.InputBegan:Connect(function(input, gameProcessed)
+				if
+					(
+						input.UserInputType == Enum.UserInputType.MouseButton1
+						or input.UserInputType == Enum.UserInputType.Touch
+						or input.UserInputType == Enum.UserInputType.TextInput
+					)
+					and new.Visible._value
+					and not UI.pointInGuiObject(input.Position.X, input.Position.Y, new.Adornee._value)
+					and not UI.pointInGuiObject(input.Position.X, input.Position.Y, new._instance)
+				then
+					UI.deactivateState(new.Visible, "floating")
+				end
+			end),
+		},
+	})
 	onAdornee(UI.peek(new.Adornee))
 
 	return setmetatable(new, Menu)

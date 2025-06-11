@@ -34,7 +34,7 @@ local prefixes = {
 }
 
 local prefixSuggestions = {
-	{ "*", nil, nil, "*  [all] (Everyone)", "allPlayers", "^%*$" },
+	{ { "*", "all" }, "*  [all] (Everyone)" },
 	{ "@", "@\t\t(Roles)" },
 	{ "%", "%\t\t(Teams)" },
 	{ "~", "~\t\t(Random)" },
@@ -86,16 +86,31 @@ local function sortPlayers(a, b)
 end
 
 local function playerSuggestion(player, suggestion)
-	suggestion = suggestion or player.Name
-	local displayName = if player.Name ~= player.DisplayName then ` [{player.DisplayName}]` else ""
-	local kDisplay = if player.GetAttribute then player:GetAttribute("_KDisplayName") else nil
-	kDisplay = if kDisplay and kDisplay ~= player.Name and kDisplay ~= player.DisplayName then ` [{kDisplay}]` else ""
-	return { suggestion, nil, nil, `{suggestion} [{player.Name}]{displayName}{kDisplay}` }
+	local displayName = if player.Name ~= player.DisplayName then player.DisplayName else nil
+	local kName = if player.GetAttribute then player:GetAttribute("_KDisplayName") else nil
+
+	if kName == player.Name or kName == displayName then
+		kName = nil
+	end
+
+	local suggestions = { suggestion }
+	table.insert(suggestions, player.Name)
+	table.insert(suggestions, displayName)
+	table.insert(suggestions, kName)
+
+	displayName = if displayName then ` [{displayName}]` else ""
+	kName = if kName then ` [{kName}]` else ""
+
+	local suggestionDisplay = if suggestion
+		then `{suggestion} [{player.Name}]{displayName}{kName}`
+		else `{player.Name} {displayName}{kName}`
+
+	return { suggestions, suggestionDisplay, player }
 end
 
 local function baseSuggestions(text, from, definition, userType: boolean?)
 	local players = Players:GetPlayers()
-	local names, instances = {}, {}
+	local names = {}
 
 	if userType then
 		for userId, user in userCache do
@@ -107,7 +122,6 @@ local function baseSuggestions(text, from, definition, userType: boolean?)
 
 	if not definition.ignoreSelf then
 		table.insert(names, playerSuggestion(Players.LocalPlayer, "me"))
-		table.insert(instances, Players.LocalPlayer)
 	end
 
 	local rank = _K.Auth.getRank(from)
@@ -117,7 +131,6 @@ local function baseSuggestions(text, from, definition, userType: boolean?)
 			and (from == _K.creatorId or not definition.lowerRank or rank > _K.Auth.getRank(player.UserId))
 		then
 			table.insert(names, playerSuggestion(player))
-			table.insert(instances, player)
 		end
 	end
 
@@ -125,7 +138,7 @@ local function baseSuggestions(text, from, definition, userType: boolean?)
 		table.insert(names, suggestion)
 	end
 
-	return names, instances
+	return names
 end
 
 local function parseIndividual(arg, self, userType)
@@ -216,7 +229,11 @@ local typeUser = {
 		return users
 	end,
 	suggestions = function(text, from, definition)
-		return baseSuggestions(text, from, definition, true)
+		local names = baseSuggestions(text, from, definition, true)
+		if tonumber(text) then
+			table.insert(names, 1, { text, nil, { UserId = tonumber(text) } })
+		end
+		return names
 	end,
 	prefixes = prefixes,
 }

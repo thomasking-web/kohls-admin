@@ -10,9 +10,9 @@ return {
 		end,
 	},
 	{
-		name = "help",
-		aliases = { "?", "prefix" },
-		description = "Displays a help notification for Kohl's Admin in this game.",
+		name = "prefix",
+		aliases = { "hotkeys" },
+		description = "Displays the prefix and hotkeys.",
 		optionalPrefix = true,
 		runClient = function(context)
 			local commandBarKey = context._K.client.hotkeys.commandBar
@@ -25,11 +25,20 @@ return {
 			local dashboardKeyText =
 				`{dashboardKey.mods.Shift and "Shift+" or ""}{dashboardKey.mods.Alt and "Alt+" or ""}{dashboardKey.key._value.Name}`
 
+			local prefix = context._K.UI.peek(context._K.client.settings.prefix)[1]
+			local prefixKeyText = string.byte(prefix)
+			for i, keyCode in Enum.KeyCode:GetEnumItems() do
+				if keyCode.Value == prefixKeyText then
+					prefixKeyText = keyCode.Name
+					break
+				end
+			end
+
 			context._K.Notify({
 				From = "_K",
 				Text = table.concat({
 					`<font family="{context._K.UI.Theme.FontMono._value.Name}">This game uses <b>Kohl's Admin</b>!\n`,
-					`<b>Prefix</b>     <font color="#0f0">{context._K.UI.peek(context._K.client.settings.prefix)[1]}</font>`,
+					`<b>Prefix</b>     <font color="#0f0">{prefixKeyText} {prefix}</font>`,
 					`<b>Commands</b>   <font color="#0f0">{commandBarKeyText} {commandBarKeyRaw}</font>`,
 					`<b>Dashboard</b>  <font color="#0f0">{dashboardKeyText} {dashboardKeyRaw}</font></font>`,
 				}, "\n"),
@@ -131,7 +140,15 @@ return {
 		description = "Shows the command bar.",
 		optionalPrefix = true,
 		runClient = function(context)
+			if context._K.Data.settings.commandBarRank == false then
+				return "Command bar has been disabled."
+			end
+			if context._K.Data.settings.commandBarRank > context.fromRank then
+				local role = context._K.Auth.getRoleFromRank(context._K.Data.settings.dashboardRank)
+				return `Command bar has been restricted to {role.name}+.`
+			end
 			task.defer(context._K.client.CommandBar.show)
+			return
 		end,
 	},
 	{
@@ -139,9 +156,17 @@ return {
 		description = "Shows the admin dashboard.",
 		optionalPrefix = true,
 		runClient = function(context)
+			if context._K.Data.settings.dashboardRank == false then
+				return `Dashboard has been disabled.`
+			end
+			if context._K.Data.settings.dashboardRank > context.fromRank then
+				local role = context._K.Auth.getRoleFromRank(context._K.Data.settings.dashboardRank)
+				return `Dashboard has been restricted to {role.name}+.`
+			end
 			if not context._K.client.dashboard.Window.Visible then
 				context._K.client.hotkeys.dashboard.callback()
 			end
+			return
 		end,
 	},
 	{
@@ -313,7 +338,7 @@ return {
 	},
 	{
 		name = "serverage",
-		aliases = {},
+		aliases = { "uptime" },
 		description = "Displays the age of the server.",
 		run = function(context, volume)
 			context._K.Remote.Notify:FireClient(context.fromPlayer, {
@@ -324,6 +349,7 @@ return {
 	},
 	{
 		name = "showfps",
+		aliases = { "getfps", "checkfps", "playerfps" },
 		description = "Displays the frames per second of a player.",
 		args = {
 			{
@@ -360,6 +386,7 @@ return {
 	},
 	{
 		name = "ping",
+		aliases = { "getping", "checkping", "latency" },
 		description = "Displays the ping of a player.",
 		args = {
 			{
@@ -389,9 +416,6 @@ return {
 			},
 		},
 
-		runClient = function(context, delay: number)
-			task.wait(delay)
-		end,
 		run = function(context, delay: number)
 			task.wait(delay)
 		end,

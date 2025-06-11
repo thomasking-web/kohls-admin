@@ -16,22 +16,18 @@ function Settings.new(_K)
 	local UI = _K.UI
 
 	local settingsDialog
+	local originalValues = {}
 	local pendingChanges = {}
 
 	local function resetChanges()
-		table.clear(pendingChanges)
-		for key, value in _K.Data.settings do
-			if string.find(key, "theme", 1, true) == 1 then
-				local themeState = UI.Theme[string.sub(key, 6)]
-				if themeState then
-					themeState:set(value)
-				elseif _K.DEBUG then
-					warn("DEBUG: Invalid themeState", key, value)
-				end
-			elseif key == "defaultTheme" then
-				_K.client.settings.defaultTheme:set(value)
+		for key, value in originalValues do
+			_K.Data.settings[key] = value
+			if _K.client.settings[key] then
+				_K.client.settings[key]:set(value, true)
 			end
 		end
+		table.clear(originalValues)
+		table.clear(pendingChanges)
 	end
 
 	local function confirmChanges()
@@ -39,9 +35,10 @@ function Settings.new(_K)
 		for key, value in pendingChanges do
 			_K.Data.settings[key] = value
 			if _K.client.settings[key] then
-				_K.client.settings[key]:set(value, key == "prefix")
+				_K.client.settings[key]:set(value, true)
 			end
 		end
+		table.clear(originalValues)
 		table.clear(pendingChanges)
 	end
 
@@ -50,23 +47,40 @@ function Settings.new(_K)
 			return
 		end
 		pendingChanges[key] = value
+		if not originalValues[key] then
+			originalValues[key] = _K.Data.settings[key]
+		end
 
 		local different = false
 		local differentTheme = false
 		for key, value in pendingChanges do
-			if value ~= _K.Data.settings[key] then
-				if string.find(key, "theme", 1, true) == 1 then
+			if string.find(key, "theme", 1, true) == 1 then
+				local themeModule = _K.client.themes._value[_K.Data.settings.defaultTheme]
+				if themeModule and UI.peek(themeModule[string.sub(key, 6)]) ~= value then
 					differentTheme = true
 				end
+			end
+			if value ~= _K.Data.settings[key] and (key ~= "defaultTheme" or value ~= "Custom (DataStore)") then
 				different = true
-				break
 			end
 		end
 
-		if string.find(key, "theme", 1, true) == 1 then
+		if string.find(key, "theme", 1, true) == 1 and _K.Data.settings.defaultTheme ~= "Custom (DataStore)" then
 			local theme = if differentTheme then "Custom (DataStore)" else _K.Data.settings.defaultTheme
-			_K.client.settings.defaultTheme:set(theme)
-			task.defer(change, "defaultTheme", theme)
+			change("defaultTheme", theme)
+		elseif key == "defaultTheme" then
+			local themeModule = _K.client.themes._value[value]
+			if themeModule then
+				-- FIX: update images and sounds
+				for key, value in themeModule do
+					local dataKey = "theme" .. key
+					local existing = _K.Data.settings[dataKey]
+					if existing ~= nil and existing ~= UI.peek(value) then
+						change(dataKey, UI.peek(value))
+					end
+				end
+			end
+			_K.client.settings.defaultTheme:set(value)
 		end
 
 		if settingsDialog then
@@ -195,7 +209,9 @@ function Settings.new(_K)
 				ContentAutomaticSize = false,
 				Text = "Theme",
 				UI.new "Select" {
-					Choice = _K.client.settings.defaultTheme,
+					Choice = UI.compute(function(use)
+						return use(_K.client.settings.defaultTheme)
+					end),
 					Choices = themeList,
 					[UI.Hook] = {
 						Selected = function(value)
@@ -208,14 +224,14 @@ function Settings.new(_K)
 		-- switches
 		for _, data in
 			{
-				{ key = "SoundEnabled", text = "UI Sounds Enabled" },
+				{ key = "SoundEnabled", text = "UI Sounds" },
 				{
 					key = "TypingSounds",
-					text = "Enable typing sounds",
+					text = "Typing sounds",
 					tip = "<b>NOTE:</b> Requires taking the audios and adding permissions to your game!\n<font transparency='0.66'>Why does Roblox do this to me</font> 😔",
 				},
 				{ key = "TypingSoundsOnEveryTextBox", text = "Sounds on every TextBox" },
-				{ key = "StrokeEnabled", text = "UI Borders Enabled" },
+				{ key = "StrokeEnabled", text = "UI Borders" },
 			}
 		do
 			table.insert(
